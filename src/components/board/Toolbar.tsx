@@ -49,7 +49,9 @@ export function Toolbar({
   onToolChange,
   onUploadClick,
   onSheetUploadClick,
+  onLoadClick,
   onNewPileClick,
+  onNewCounterClick,
   canUndo,
   canRedo,
   onUndo,
@@ -59,7 +61,9 @@ export function Toolbar({
   onToolChange: (tool: Tool) => void;
   onUploadClick: () => void;
   onSheetUploadClick: () => void;
+  onLoadClick: () => void;
   onNewPileClick: () => void;
+  onNewCounterClick: () => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -80,7 +84,9 @@ export function Toolbar({
         <div className="mx-2 my-0.5 border-t border-zinc-200" />
         <ToolButton icon="image" label="Upload image" onClick={onUploadClick} />
         <ToolButton icon="sheet" label="Upload card sheet and cut it" onClick={onSheetUploadClick} />
+        <ToolButton icon="load" label="Load images and cut them into a pile" onClick={onLoadClick} />
         <ToolButton icon="pile" label="New pile" onClick={onNewPileClick} />
+        <ToolButton icon="counter" label="New counter (life, damage, mana…)" onClick={onNewCounterClick} />
       </div>
       <div className="flex flex-col gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-md">
         <ToolButton icon="undo" label="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo} />

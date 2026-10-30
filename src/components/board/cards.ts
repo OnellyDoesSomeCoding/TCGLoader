@@ -2,9 +2,14 @@ import { LiveList, LiveMap, type LiveObject } from "@liveblocks/client";
 import type { Card, Crop, ImageLayer } from "./types";
 
 type Root = LiveObject<Liveblocks["Storage"]>;
-type CardLike = { url: string; width: number; height: number; crop?: Readonly<Crop> };
+type CardLike = { url: string; width: number; height: number; crop?: Readonly<Crop>; rotation?: number };
 
 export const DEFAULT_PILE_SIZE = { width: 160, height: 224 };
+
+/** Board size for a card cut from `width`×`height` source pixels: as tall as a new pile, same aspect ratio. */
+export function cardSizeFor(width: number, height: number) {
+  return { width: (width / height) * DEFAULT_PILE_SIZE.height, height: DEFAULT_PILE_SIZE.height };
+}
 
 function cardMap(storage: Root, key: "piles" | "hands") {
   let map = storage.get(key);
@@ -67,11 +72,18 @@ export function popTop(list: LiveList<Card>): Card | null {
   return card;
 }
 
+/** True when a card is turned on its side, so its footprint's width and height are swapped. */
+export function isSideways(rotation: number | undefined) {
+  return (rotation ?? 0) % 180 !== 0;
+}
+
+/** A board card as it goes into a pile or hand: turned back upright. */
 export function cardFromImage(layer: CardLike): Card {
+  const sideways = isSideways(layer.rotation);
   return {
     url: layer.url,
-    width: layer.width,
-    height: layer.height,
+    width: sideways ? layer.height : layer.width,
+    height: sideways ? layer.width : layer.height,
     ...(layer.crop ? { crop: { ...layer.crop } } : {}),
   };
 }

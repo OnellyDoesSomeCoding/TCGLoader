@@ -52,6 +52,9 @@ export type ImageLayer = {
   crop?: Crop;
   // Face-down cards show the shared card back to everyone.
   faceDown?: boolean;
+  // Clockwise turn in degrees: 0, 90, 180 or 270. Missing means 0. x/y/width/height
+  // are always the turned footprint, so a sideways card's width and height are swapped.
+  rotation?: number;
 };
 
 /** A stack of cards on the board. Its cards live in storage `piles[id]`, last = top. */
@@ -65,6 +68,18 @@ export type PileLayer = {
   faceDown: boolean;
 };
 
+/** A named number with − and + buttons, for life, damage, mana and the like. */
+export type CounterLayer = {
+  type: "counter";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  name: string;
+  value: number;
+  color: string;
+};
+
 /** A card while it's off the board, in a pile or a hand. Width/height are its board size. */
 export type Card = {
   url: string;
@@ -73,7 +88,7 @@ export type Card = {
   crop?: Crop;
 };
 
-export type Layer = ShapeLayer | StrokeLayer | TextLayer | ImageLayer | PileLayer;
+export type Layer = ShapeLayer | StrokeLayer | TextLayer | ImageLayer | PileLayer | CounterLayer;
 export type LayerType = Layer["type"];
 
 /** Where dragged cards will land when released. */

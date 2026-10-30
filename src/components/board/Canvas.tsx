@@ -21,6 +21,7 @@ import {
   DEFAULT_PILE_SIZE,
   besidePile,
   cardFromImage,
+  cardSizeFor,
   ensureCardStorage,
   handCards,
   imageFromCard,
@@ -29,6 +30,7 @@ import {
   removeLayer,
   shuffled,
 } from "./cards";
+import { COUNTER_SIZE } from "./CounterView";
 import { CutDialog, type CutOptions } from "./CutDialog";
 import {
   normalizePoints,
@@ -42,6 +44,7 @@ import {
 import { HandTray } from "./HandTray";
 import { Icon } from "./Icon";
 import { LayerView } from "./LayerView";
+import { LoadDialog, type LoadOptions } from "./LoadDialog";
 import { Cursors, DraftPath, OthersDrafts, OthersSelections, SelectionBox } from "./Overlays";
 import { PileBrowser } from "./PileBrowser";
 import { ShareDialog, type BoardInfo } from "./ShareDialog";
@@ -68,6 +71,8 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGE_SIDE = 480;
 const MAX_SHEET_SIDE = 1200;
 const CARD_SPACING = 16;
+const COUNTER_COLOR = "#1971c2";
+const MAX_COUNTER = 99999;
 
 // Layers that have a stroke color and width.
 const STROKED_TYPES: LayerType[] = ["rectangle", "ellipse", "path", "line", "arrow"];
@@ -90,8 +95,8 @@ type Gesture =
   | { mode: "panning"; startX: number; startY: number; startCamera: Camera }
   | { mode: "pressing"; origin: Point; additive: readonly string[] }
   | { mode: "marquee"; origin: Point; additive: readonly string[] }
-  // `cards`: the selection has cards that can be dropped into a hand or onto a pile.
-  | { mode: "translating"; last: Point; cards: boolean; drop: DropTarget | null }
+  // `drops`: what the selection can be dropped onto; see selectionDrops.
+  | { mode: "translating"; last: Point; drops: { cards: boolean; piles: boolean }; drop: DropTarget | null }
   // Pressed on a pile: a drag pulls its top card off, a click selects the pile.
   | { mode: "pilePress"; pileId: string; origin: Point; shift: boolean }
   | { mode: "resizing"; handle: Handle; bounds: XYWH; layers: Record<string, Layer>; keepAspect: boolean }
@@ -185,6 +190,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sheetInputRef = useRef<HTMLInputElement>(null);
+  const loadInputRef = useRef<HTMLInputElement>(null);
   const handTrayRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture>({ mode: "idle" });
   // Latest pointer position on the board, for "F flips the card under the cursor".
@@ -201,6 +207,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
   const [uploads, setUploads] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [cutTargetId, setCutTargetId] = useState<string | null>(null);
+  // Images picked for "Load", waiting in the load dialog.
+  const [loadFiles, setLoadFiles] = useState<File[] | null>(null);
   const [browsePileId, setBrowsePileId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [handDrag, setHandDrag] = useState<{
@@ -256,6 +264,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
         const l = selection.length > 0 ? root.layers[selection[0]] : undefined;
         if (!l || l.type === "image" || l.type === "pile") return null;
         if (l.type === "text") return { color: l.color, fontSize: l.fontSize };
+        if (l.type === "counter") return { color: l.color };
         if (l.type === "rectangle" || l.type === "ellipse") {
           return { color: l.stroke, fill: l.fill, strokeWidth: l.strokeWidth };
         }
@@ -367,7 +376,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
       const type = l.get("type");
       const update: Record<string, string | number> = {};
       const stroked = STROKED_TYPES.includes(type);
-      if (patch.color !== undefined && type === "text") update.color = patch.color;
+      if (patch.color !== undefined && (type === "text" || type === "counter")) update.color = patch.color;
       if (patch.color !== undefined && stroked) update.stroke = patch.color;
       if (patch.fill !== undefined && (type === "rectangle" || type === "ellipse")) update.fill = patch.fill;
       if (patch.strokeWidth !== undefined && stroked) update.strokeWidth = patch.strokeWidth;
@@ -416,10 +425,11 @@ export function Canvas({ board }: { board: BoardInfo }) {
     [],
   );
 
-  const selectionHasCards = useMutation(
-    ({ storage, self }) => self.presence.selection.some((id) => storage.get("layers").get(id)?.get("type") === "image"),
-    [],
-  );
+  /** What a drag of the selection can drop: `cards` go to a hand or pile, `piles` merge into another pile. */
+  const selectionDrops = useMutation(({ storage, self }) => {
+    const types = self.presence.selection.map((id) => storage.get("layers").get(id)?.get("type"));
+    return { cards: types.includes("image"), piles: types.includes("pile") };
+  }, []);
 
   /** How many cards are inside the selected piles, to warn before deleting them. */
   const cardsInSelectedPiles = useMutation(
@@ -428,7 +438,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
     [],
   );
 
-  /** Moves the selected cards into your hand or onto a pile, keeping their stacking order. */
+  /**
+   * Moves the selected cards into your hand or onto a pile, keeping their stacking order.
+   * Selected piles dropped onto another pile are merged into it, their cards going on top.
+   */
   const moveSelectionTo = useMutation(({ storage, self, setMyPresence }, target: DropTarget) => {
     const layers = storage.get("layers");
     const dest = target.kind === "hand" ? handCards(storage, self.id) : pileCards(storage, target.id);
@@ -436,12 +449,34 @@ export function Canvas({ board }: { board: BoardInfo }) {
     for (const id of storage.get("layerIds").toJSON()) {
       if (!self.presence.selection.includes(id)) continue;
       const l = layers.get(id)?.toJSON();
-      if (l?.type !== "image") continue;
-      dest.push(cardFromImage(l));
+      if (l?.type === "image") {
+        dest.push(cardFromImage(l));
+      } else if (l?.type === "pile" && target.kind === "pile" && id !== target.id) {
+        for (const card of storage.get("piles")?.get(id)?.toJSON() ?? []) dest.push(card as Card);
+      } else {
+        continue;
+      }
       removeLayer(storage, id);
       moved.push(id);
     }
     setMyPresence({ selection: self.presence.selection.filter((id) => !moved.includes(id)) }, { addToHistory: true });
+  }, []);
+
+  /** Turns cards a quarter turn clockwise about their centers. */
+  const rotateCards = useMutation(({ storage }, ids: readonly string[]) => {
+    for (const id of ids) {
+      const l = storage.get("layers").get(id);
+      const layer = l?.toJSON();
+      if (layer?.type !== "image") continue;
+      // The footprint turns too: swap width and height, keeping the center in place.
+      l!.update({
+        rotation: ((layer.rotation ?? 0) + 90) % 360,
+        x: layer.x + (layer.width - layer.height) / 2,
+        y: layer.y + (layer.height - layer.width) / 2,
+        width: layer.height,
+        height: layer.width,
+      });
+    }
   }, []);
 
   const flipLayers = useMutation(({ storage }, ids: readonly string[]) => {
@@ -472,6 +507,32 @@ export function Canvas({ board }: { board: BoardInfo }) {
     setMyPresence({ selection: [id] }, { addToHistory: true });
   }, []);
 
+  /** Makes a pile holding `cards` (last = top), centered on `center` and sized like its top card. */
+  const createPileOf = useMutation(
+    ({ storage, setMyPresence }, cards: Card[], center: Point, name: string, faceDown: boolean) => {
+      const top = cards[cards.length - 1];
+      if (!top) return;
+      const id = nanoid();
+      storage.get("layers").set(
+        id,
+        new LiveObject<Layer>({
+          type: "pile",
+          name,
+          faceDown,
+          x: center.x - top.width / 2,
+          y: center.y - top.height / 2,
+          width: top.width,
+          height: top.height,
+        }),
+      );
+      storage.get("layerIds").push(id);
+      const pile = pileCards(storage, id);
+      for (const card of cards) pile.push(card);
+      setMyPresence({ selection: [id] }, { addToHistory: true });
+    },
+    [],
+  );
+
   /** Stacks the selected cards into a new pile where the topmost one was. */
   const makePile = useMutation(({ storage, self, setMyPresence }) => {
     const layers = storage.get("layers");
@@ -484,8 +545,15 @@ export function Canvas({ board }: { board: BoardInfo }) {
       const l = layers.get(id)?.toJSON();
       if (l?.type !== "image") continue;
       ids.push(id);
-      cards.push(cardFromImage(l));
-      top = { x: l.x, y: l.y, width: l.width, height: l.height };
+      const card = cardFromImage(l);
+      cards.push(card);
+      // Upright, even if the card was turned, centered where it was.
+      top = {
+        x: l.x + (l.width - card.width) / 2,
+        y: l.y + (l.height - card.height) / 2,
+        width: card.width,
+        height: card.height,
+      };
       allFaceDown &&= !!l.faceDown;
     }
     if (!top) return;
@@ -499,9 +567,23 @@ export function Canvas({ board }: { board: BoardInfo }) {
     setMyPresence({ selection: [pileId] }, { addToHistory: true });
   }, []);
 
-  const pileName = useMutation(({ storage }, id: string) => {
+  /** A pile's or counter's name and type, or null for other layers. */
+  const namedLayer = useMutation(({ storage }, id: string) => {
     const l = storage.get("layers").get(id)?.toJSON();
-    return l?.type === "pile" ? l.name : null;
+    return l?.type === "pile" || l?.type === "counter" ? { type: l.type, name: l.name } : null;
+  }, []);
+
+  const counterValue = useMutation(({ storage }, id: string) => {
+    const l = storage.get("layers").get(id)?.toJSON();
+    return l?.type === "counter" ? l.value : null;
+  }, []);
+
+  /** Sets a counter to `change(current value)`, kept to a whole number within range. */
+  const changeCounter = useMutation(({ storage }, id: string, change: (value: number) => number) => {
+    const l = storage.get("layers").get(id);
+    const layer = l?.toJSON();
+    if (layer?.type !== "counter") return;
+    l!.update({ value: clamp(Math.round(change(layer.value)), -MAX_COUNTER, MAX_COUNTER) });
   }, []);
 
   /** Moves up to `n` cards from the top of a pile into your hand. Returns how many moved. */
@@ -599,14 +681,15 @@ export function Canvas({ board }: { board: BoardInfo }) {
     if (!sheet || sheet.type !== "image") return;
 
     const base = sheet.crop ?? FULL_CROP;
+    // Cells are fractions of the upright sheet, even if it was turned on the board.
+    const upright = cardFromImage(sheet);
     // Keeping the sheet puts the cards to its right instead of on top of it.
     const originX = options.keepOriginal ? sheet.x + sheet.width + CARD_SPACING * 3 : sheet.x;
     const insertAt = order.indexOf(id) + 1;
     const ids: string[] = [];
 
     options.cells.forEach((cell, i) => {
-      const width = sheet.width * cell.width;
-      const height = sheet.height * cell.height;
+      const { width, height } = cardSizeFor(upright.width * cell.width, upright.height * cell.height);
       const col = i % options.columns;
       const row = Math.floor(i / options.columns);
       const cardId = nanoid();
@@ -711,11 +794,56 @@ export function Canvas({ board }: { board: BoardInfo }) {
     if (answer !== null && Number.isInteger(n) && n > 0) draw(pileId, n);
   }
 
-  function renamePile(id: string) {
-    const current = pileName(id);
+  function renameLayer(id: string) {
+    const current = namedLayer(id);
     if (current === null) return;
-    const name = window.prompt("Pile name", current)?.trim();
-    if (name) updateLayer(id, { name: name.slice(0, 40) });
+    const counter = current.type === "counter";
+    const name = window.prompt(counter ? "Counter name" : "Pile name", current.name)?.trim();
+    // Counter names must fit on the counter.
+    if (name) updateLayer(id, { name: name.slice(0, counter ? 20 : 40) });
+  }
+
+  function addCounter(center: Point) {
+    const { width, height } = COUNTER_SIZE;
+    insertLayer(
+      nanoid(),
+      {
+        type: "counter",
+        name: "Counter",
+        value: 0,
+        color: COUNTER_COLOR,
+        x: center.x - width / 2,
+        y: center.y - height / 2,
+        width,
+        height,
+      },
+      true,
+    );
+    setTool("select");
+  }
+
+  /** Asks for an amount: "+3" or "-3" adds or subtracts, a plain number sets the counter. */
+  function editCounter(id: string) {
+    const current = counterValue(id);
+    if (current === null) return;
+    const answer = window.prompt(`Now ${current}. Type +3 or -3 to add or subtract, or a number to set it.`, "")?.trim();
+    if (!answer) return;
+    // Accepts the typographic minus (−) as well as "-".
+    const match = answer.match(/^([+\-−])?\s*(\d+)$/);
+    if (!match) {
+      setNotice("Type a whole number, like 20, +3 or -3.");
+      return;
+    }
+    const n = Number(match[2]);
+    changeCounter(id, (value) => (match[1] === "+" ? value + n : match[1] ? value - n : n));
+  }
+
+  /** The − and + buttons on a counter. Shift steps by 5. */
+  function onCounterStep(e: React.PointerEvent, id: string, delta: number) {
+    // Other tools treat the press as being on the canvas.
+    if (tool !== "select" || e.button !== 0 || spaceHeld || editingId) return;
+    e.stopPropagation();
+    changeCounter(id, (value) => value + delta * (e.shiftKey ? 5 : 1));
   }
 
   /** F flips the card or pile under the cursor, or the selection if nothing is under it. */
@@ -766,40 +894,62 @@ export function Canvas({ board }: { board: BoardInfo }) {
     setTool("select");
   }
 
-  /** Uploads an image and places it centered on `at`. Returns the new layer's id. */
-  async function addImage(file: File, at: Point, maxSide = MAX_IMAGE_SIDE): Promise<string | null> {
-    if (!file.type.startsWith("image/")) return null;
+  /** Uploads an image to blob storage. Returns its URL, or null after saying why it failed. */
+  async function uploadImage(file: File): Promise<string | null> {
     if (file.size > MAX_IMAGE_BYTES) {
       setNotice(`${file.name} is larger than 10 MB.`);
       return null;
     }
     setUploads((n) => n + 1);
     try {
-      const [size, blob] = await Promise.all([
-        imageSize(file),
-        upload(`boards/${board.id}/${file.name.replace(/[^\w.-]+/g, "_")}`, file, {
-          access: "public",
-          handleUploadUrl: "/api/upload",
-          clientPayload: board.id,
-        }),
-      ]);
-      const scale = Math.min(1, maxSide / Math.max(size.width, size.height));
-      const width = size.width * scale;
-      const height = size.height * scale;
-      const id = nanoid();
-      insertLayer(
-        id,
-        { type: "image", x: at.x - width / 2, y: at.y - height / 2, width, height, url: blob.url },
-        true,
-      );
-      setTool("select");
-      return id;
+      const blob = await upload(`boards/${board.id}/${file.name.replace(/[^\w.-]+/g, "_")}`, file, {
+        access: "public",
+        handleUploadUrl: "/api/upload",
+        clientPayload: board.id,
+      });
+      return blob.url;
     } catch (error) {
       setNotice(`Couldn't upload ${file.name}: ${(error as Error).message}`);
       return null;
     } finally {
       setUploads((n) => n - 1);
     }
+  }
+
+  /** Uploads an image and places it centered on `at`. Returns the new layer's id. */
+  async function addImage(file: File, at: Point, maxSide = MAX_IMAGE_SIDE): Promise<string | null> {
+    if (!file.type.startsWith("image/")) return null;
+    const [size, url] = await Promise.all([imageSize(file), uploadImage(file)]);
+    if (!url) return null;
+    const scale = Math.min(1, maxSide / Math.max(size.width, size.height));
+    const width = size.width * scale;
+    const height = size.height * scale;
+    const id = nanoid();
+    insertLayer(id, { type: "image", x: at.x - width / 2, y: at.y - height / 2, width, height, url }, true);
+    setTool("select");
+    return id;
+  }
+
+  /** Uploads every sheet, cuts them and stacks all the cards in a new pile centered on `at`. */
+  async function loadPile(options: LoadOptions, at: Point) {
+    const urls = await Promise.all(options.sheets.map((sheet) => uploadImage(sheet.file)));
+    const cards: Card[] = [];
+    options.sheets.forEach((sheet, i) => {
+      const url = urls[i];
+      if (!url) return;
+      for (const cell of sheet.cells) {
+        const whole = cell.x === 0 && cell.y === 0 && cell.width === 1 && cell.height === 1;
+        cards.push({
+          url,
+          ...cardSizeFor(sheet.width * cell.width, sheet.height * cell.height),
+          ...(whole ? {} : { crop: cell }),
+        });
+      }
+    });
+    if (cards.length === 0) return;
+    // A pile's top is its last card, so reverse to keep the first card loaded on top.
+    createPileOf(options.shuffle ? shuffled(cards) : cards.reverse(), at, options.name, options.faceDown);
+    setTool("select");
   }
 
   function addImages(files: Iterable<File>, at: Point) {
@@ -868,7 +1018,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
     if (next !== selection) updateMyPresence({ selection: next }, { addToHistory: true });
 
     history.pause();
-    gesture.current = { mode: "translating", last: toWorld(e), cards: selectionHasCards(), drop: null };
+    gesture.current = { mode: "translating", last: toWorld(e), drops: selectionDrops(), drop: null };
   }
 
   function onPileBodyPointerDown(e: React.PointerEvent, id: string) {
@@ -928,7 +1078,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
       handle,
       bounds: selectionBounds,
       layers,
-      keepAspect: Object.values(layers).some((l) => l.type === "image" || l.type === "pile"),
+      keepAspect: Object.values(layers).some((l) => l.type === "image" || l.type === "pile" || l.type === "counter"),
     };
   }
 
@@ -960,8 +1110,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
       case "translating":
         translateSelection(p.x - g.last.x, p.y - g.last.y);
         g.last = p;
-        if (g.cards) {
-          const drop = dropTargetAt(e.clientX, e.clientY, p, currentSelection());
+        if (g.drops.cards || g.drops.piles) {
+          let drop = dropTargetAt(e.clientX, e.clientY, p, currentSelection());
+          // Only loose cards go into a hand; piles only merge into piles.
+          if (drop?.kind === "hand" && !g.drops.cards) drop = null;
           if (!sameDrop(drop, g.drop)) {
             g.drop = drop;
             setDropTarget(drop);
@@ -971,12 +1123,12 @@ export function Canvas({ board }: { board: BoardInfo }) {
       case "pilePress":
         if (Math.hypot(p.x - g.origin.x, p.y - g.origin.y) * camera.zoom > 4) {
           if (takeTopToBoard(g.pileId, p, g.shift)) {
-            gesture.current = { mode: "translating", last: p, cards: true, drop: null };
+            gesture.current = { mode: "translating", last: p, drops: { cards: true, piles: false }, drop: null };
           } else {
             // Empty pile: drag the pile itself.
             updateMyPresence({ selection: [g.pileId] }, { addToHistory: true });
             translateSelection(p.x - g.origin.x, p.y - g.origin.y);
-            gesture.current = { mode: "translating", last: p, cards: false, drop: null };
+            gesture.current = { mode: "translating", last: p, drops: { cards: false, piles: true }, drop: null };
           }
         }
         break;
@@ -1066,7 +1218,12 @@ export function Canvas({ board }: { board: BoardInfo }) {
   const handlers = {
     onLayerPointerDown,
     onPileBodyPointerDown,
-    onPileRename: renamePile,
+    onPileRename: renameLayer,
+    onCounterStep,
+    onCounterEdit: editCounter,
+    onCardRotate: (id: string) => {
+      if (tool === "select") rotateCards([id]);
+    },
     onLayerDoubleClick,
     onTextChange,
     onTextEditEnd,
@@ -1080,6 +1237,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
       onLayerPointerDown: (e: React.PointerEvent, id: string) => handlersRef.current.onLayerPointerDown(e, id),
       onPileBodyPointerDown: (e: React.PointerEvent, id: string) => handlersRef.current.onPileBodyPointerDown(e, id),
       onPileRename: (id: string) => handlersRef.current.onPileRename(id),
+      onCounterStep: (e: React.PointerEvent, id: string, delta: number) =>
+        handlersRef.current.onCounterStep(e, id, delta),
+      onCounterEdit: (id: string) => handlersRef.current.onCounterEdit(id),
+      onCardRotate: (id: string) => handlersRef.current.onCardRotate(id),
       onLayerDoubleClick: (id: string) => handlersRef.current.onLayerDoubleClick(id),
       onTextChange: (id: string, text: string, height: number) => handlersRef.current.onTextChange(id, text, height),
       onTextEditEnd: (id: string) => handlersRef.current.onTextEditEnd(id),
@@ -1204,7 +1365,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
   let controls: StyleControls;
   if (selectedTypes.length > 0) {
     controls = {
-      color: selectedTypes.some((t) => t === "text" || STROKED_TYPES.includes(t)),
+      color: selectedTypes.some((t) => t === "text" || t === "counter" || STROKED_TYPES.includes(t)),
       fill: selectedTypes.some((t) => t === "rectangle" || t === "ellipse"),
       strokeWidth: selectedTypes.some((t) => STROKED_TYPES.includes(t)),
       fontSize: selectedTypes.includes("text"),
@@ -1236,7 +1397,19 @@ export function Canvas({ board }: { board: BoardInfo }) {
       { label: "Shuffle", icon: "shuffle", onClick: () => shufflePile(onePile) },
       { label: "Flip", icon: "flip", title: "Flip the pile (F)", onClick: () => flipLayers([onePile]) },
       { label: "Look through", icon: "eye", onClick: () => setBrowsePileId(onePile) },
-      { label: "Rename", icon: "rename", onClick: () => renamePile(onePile) },
+      { label: "Rename", icon: "rename", onClick: () => renameLayer(onePile) },
+    );
+  }
+  const oneCounter = selection.length === 1 && selectedTypes[0] === "counter" ? selection[0] : null;
+  if (oneCounter) {
+    contextActions.push(
+      {
+        label: "Change…",
+        icon: "counter",
+        title: "Add, subtract or set a value (or double-click the counter)",
+        onClick: () => editCounter(oneCounter),
+      },
+      { label: "Rename", icon: "rename", onClick: () => renameLayer(oneCounter) },
     );
   }
   if (selectedTypes.includes("image")) {
@@ -1244,6 +1417,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
       { label: "Add to hand", icon: "to_hand", onClick: () => moveSelectionTo({ kind: "hand" }) },
       { label: "Make pile", icon: "pile", onClick: makePile },
       { label: "Flip", icon: "flip", title: "Flip (F)", onClick: () => flipLayers(selection) },
+      { label: "Rotate", icon: "rotate", title: "Turn 90° right (double-click a card)", onClick: () => rotateCards(selection) },
     );
   }
   if (selection.length === 1 && selectedTypes[0] === "image") {
@@ -1330,7 +1504,9 @@ export function Canvas({ board }: { board: BoardInfo }) {
         onToolChange={changeTool}
         onUploadClick={() => fileInputRef.current?.click()}
         onSheetUploadClick={() => sheetInputRef.current?.click()}
+        onLoadClick={() => loadInputRef.current?.click()}
         onNewPileClick={() => createPile(viewportCenter())}
+        onNewCounterClick={() => addCounter(viewportCenter())}
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={history.undo}
@@ -1437,6 +1613,18 @@ export function Canvas({ board }: { board: BoardInfo }) {
         }}
       />
 
+      <input
+        ref={loadInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) setLoadFiles(Array.from(e.target.files));
+          e.target.value = "";
+        }}
+      />
+
       {shareOpen && <ShareDialog board={board} onClose={() => setShareOpen(false)} />}
 
       {browsePileId && (
@@ -1444,6 +1632,17 @@ export function Canvas({ board }: { board: BoardInfo }) {
           pileId={browsePileId}
           onClose={() => setBrowsePileId(null)}
           onTake={(index, to) => takeFromPile(browsePileId, index, to)}
+        />
+      )}
+
+      {loadFiles && (
+        <LoadDialog
+          files={loadFiles}
+          onClose={() => setLoadFiles(null)}
+          onLoad={(options) => {
+            loadPile(options, viewportCenter());
+            setLoadFiles(null);
+          }}
         />
       )}
 

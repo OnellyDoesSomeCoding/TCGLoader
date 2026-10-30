@@ -3,6 +3,8 @@
 import { useStorage } from "@liveblocks/react/suspense";
 import { memo, useEffect, useRef } from "react";
 import { CardBack, CroppedImage, PileView } from "./CardArt";
+import { isSideways } from "./cards";
+import { CounterView } from "./CounterView";
 import { arrowHeadPath, smoothPath } from "./geometry";
 
 type LayerViewProps = {
@@ -13,6 +15,9 @@ type LayerViewProps = {
   onLayerPointerDown: (e: React.PointerEvent, id: string) => void;
   onPileBodyPointerDown: (e: React.PointerEvent, id: string) => void;
   onPileRename: (id: string) => void;
+  onCounterStep: (e: React.PointerEvent, id: string, delta: number) => void;
+  onCounterEdit: (id: string) => void;
+  onCardRotate: (id: string) => void;
   onLayerDoubleClick: (id: string) => void;
   onTextChange: (id: string, text: string, height: number) => void;
   onTextEditEnd: (id: string) => void;
@@ -26,6 +31,9 @@ export const LayerView = memo(function LayerView({
   onLayerPointerDown,
   onPileBodyPointerDown,
   onPileRename,
+  onCounterStep,
+  onCounterEdit,
+  onCardRotate,
   onLayerDoubleClick,
   onTextChange,
   onTextEditEnd,
@@ -128,29 +136,28 @@ export const LayerView = memo(function LayerView({
         </foreignObject>
       );
 
-    case "image":
-      if (layer.faceDown) {
-        return (
-          <CardBack
-            {...common}
-            x={layer.x}
-            y={layer.y}
-            width={Math.max(layer.width, 1)}
-            height={Math.max(layer.height, 1)}
-          />
-        );
-      }
+    case "image": {
+      // The layer box is the turned footprint; draw the card upright in it, then turn it.
+      const rotation = layer.rotation ?? 0;
+      const sideways = isSideways(rotation);
+      const width = Math.max(sideways ? layer.height : layer.width, 1);
+      const height = Math.max(sideways ? layer.width : layer.height, 1);
+      const cx = layer.x + layer.width / 2;
+      const cy = layer.y + layer.height / 2;
+      const box = { x: cx - width / 2, y: cy - height / 2, width, height };
       return (
-        <CroppedImage
-          {...common}
-          url={layer.url}
-          crop={layer.crop}
-          x={layer.x}
-          y={layer.y}
-          width={Math.max(layer.width, 1)}
-          height={Math.max(layer.height, 1)}
-        />
+        <g
+          onDoubleClick={() => onCardRotate(id)}
+          transform={rotation ? `rotate(${rotation} ${cx} ${cy})` : undefined}
+        >
+          {layer.faceDown ? (
+            <CardBack {...common} {...box} />
+          ) : (
+            <CroppedImage {...common} url={layer.url} crop={layer.crop} {...box} />
+          )}
+        </g>
       );
+    }
 
     case "pile":
       return (
@@ -162,6 +169,16 @@ export const LayerView = memo(function LayerView({
           onTabPointerDown={common.onPointerDown}
           onBodyPointerDown={(e) => onPileBodyPointerDown(e, id)}
           onTabDoubleClick={() => onPileRename(id)}
+        />
+      );
+
+    case "counter":
+      return (
+        <CounterView
+          layer={layer}
+          onBodyPointerDown={common.onPointerDown}
+          onBodyDoubleClick={() => onCounterEdit(id)}
+          onStep={(e, delta) => onCounterStep(e, id, delta)}
         />
       );
   }

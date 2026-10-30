@@ -85,10 +85,8 @@ export function CutDialog({
   });
   const natural = useNaturalSize(layer?.url);
 
-  const [columns, setColumns] = useState(3);
-  const [rows, setRows] = useState(3);
-  const [margin, setMargin] = useState(0);
-  const [gap, setGap] = useState(0);
+  const [grid, setGrid] = useState(DEFAULT_GRID);
+  const { columns, rows } = grid;
   const [keepOriginal, setKeepOriginal] = useState(false);
 
   // Someone else deleted the image while the dialog was open.
@@ -102,13 +100,9 @@ export function CutDialog({
   // Pixel size of the part of the image this layer shows.
   const sheetW = natural ? Math.round(natural.width * crop.width) : 0;
   const sheetH = natural ? Math.round(natural.height * crop.height) : 0;
-  const cells = natural ? gridCells(sheetW, sheetH, columns, rows, margin, gap) : null;
+  const cells = natural ? gridCells(sheetW, sheetH, columns, rows, grid.margin, grid.gap) : null;
   const cardW = cells ? Math.floor(cells[0].width * sheetW) : 0;
   const cardH = cells ? Math.floor(cells[0].height * sheetH) : 0;
-
-  const scale = natural ? Math.min(PREVIEW_WIDTH / sheetW, PREVIEW_HEIGHT / sheetH) : 1;
-  const previewW = Math.round(sheetW * scale);
-  const previewH = Math.round(sheetH * scale);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -146,53 +140,21 @@ export function CutDialog({
           style={{ minHeight: PREVIEW_HEIGHT / 2 }}
         >
           {natural ? (
-            <svg width={previewW} height={previewH} viewBox={`0 0 ${sheetW} ${sheetH}`} className="max-w-full">
-              <CroppedImage url={layer.url} crop={layer.crop} x={0} y={0} width={sheetW} height={sheetH} />
-              {cells?.map((c, i) => (
-                <rect
-                  key={i}
-                  x={c.x * sheetW}
-                  y={c.y * sheetH}
-                  width={c.width * sheetW}
-                  height={c.height * sheetH}
-                  fill="rgb(79 70 229 / 0.12)"
-                  stroke="#4f46e5"
-                  strokeWidth={1.5 / scale}
-                />
-              ))}
-            </svg>
+            <GridPreview
+              url={layer.url}
+              crop={layer.crop}
+              sheetW={sheetW}
+              sheetH={sheetH}
+              cells={cells}
+              maxWidth={PREVIEW_WIDTH}
+              maxHeight={PREVIEW_HEIGHT}
+            />
           ) : (
             <span className="text-sm text-zinc-500">Loading image…</span>
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-xs font-medium text-zinc-500">Presets</span>
-          {PRESETS.map((p) => (
-            <button
-              key={`${p.cols}x${p.rows}`}
-              type="button"
-              onClick={() => {
-                setColumns(p.cols);
-                setRows(p.rows);
-              }}
-              className={`rounded-md border px-2 py-1 text-xs font-medium ${
-                columns === p.cols && rows === p.rows
-                  ? "border-brand bg-brand/10 text-brand"
-                  : "border-zinc-300 hover:bg-zinc-50"
-              }`}
-            >
-              {p.cols} × {p.rows}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <NumberField label="Columns" value={columns} min={1} max={MAX_CELLS_PER_SIDE} onChange={setColumns} />
-          <NumberField label="Rows" value={rows} min={1} max={MAX_CELLS_PER_SIDE} onChange={setRows} />
-          <NumberField label="Margin (px)" value={margin} min={0} max={10000} onChange={setMargin} />
-          <NumberField label="Gap (px)" value={gap} min={0} max={10000} onChange={setGap} />
-        </div>
+        <GridFields grid={grid} onChange={(patch) => setGrid((g) => ({ ...g, ...patch }))} />
 
         <p className={`text-sm ${natural && !cells ? "text-red-600" : "text-zinc-600"}`}>
           {!natural
@@ -225,6 +187,86 @@ export function CutDialog({
         </div>
       </form>
     </div>
+  );
+}
+
+/** How a sheet is split: a columns × rows grid, with `margin` and `gap` in source pixels. */
+export type Grid = { columns: number; rows: number; margin: number; gap: number };
+
+export const DEFAULT_GRID: Grid = { columns: 3, rows: 3, margin: 0, gap: 0 };
+
+/** Preset buttons plus columns, rows, margin and gap inputs. */
+export function GridFields({ grid, onChange }: { grid: Grid; onChange: (patch: Partial<Grid>) => void }) {
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-xs font-medium text-zinc-500">Presets</span>
+        {PRESETS.map((p) => (
+          <button
+            key={`${p.cols}x${p.rows}`}
+            type="button"
+            onClick={() => onChange({ columns: p.cols, rows: p.rows })}
+            className={`rounded-md border px-2 py-1 text-xs font-medium ${
+              grid.columns === p.cols && grid.rows === p.rows
+                ? "border-brand bg-brand/10 text-brand"
+                : "border-zinc-300 hover:bg-zinc-50"
+            }`}
+          >
+            {p.cols} × {p.rows}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <NumberField label="Columns" value={grid.columns} min={1} max={MAX_CELLS_PER_SIDE} onChange={(columns) => onChange({ columns })} />
+        <NumberField label="Rows" value={grid.rows} min={1} max={MAX_CELLS_PER_SIDE} onChange={(rows) => onChange({ rows })} />
+        <NumberField label="Margin (px)" value={grid.margin} min={0} max={10000} onChange={(margin) => onChange({ margin })} />
+        <NumberField label="Gap (px)" value={grid.gap} min={0} max={10000} onChange={(gap) => onChange({ gap })} />
+      </div>
+    </>
+  );
+}
+
+/** A sheet scaled to fit `maxWidth`×`maxHeight`, with its grid cells outlined. */
+export function GridPreview({
+  url,
+  crop,
+  sheetW,
+  sheetH,
+  cells,
+  maxWidth,
+  maxHeight,
+}: {
+  url: string;
+  crop?: Readonly<Crop>;
+  sheetW: number;
+  sheetH: number;
+  cells: Crop[] | null;
+  maxWidth: number;
+  maxHeight: number;
+}) {
+  const scale = Math.min(maxWidth / sheetW, maxHeight / sheetH);
+  return (
+    <svg
+      width={Math.round(sheetW * scale)}
+      height={Math.round(sheetH * scale)}
+      viewBox={`0 0 ${sheetW} ${sheetH}`}
+      className="max-w-full"
+    >
+      <CroppedImage url={url} crop={crop} x={0} y={0} width={sheetW} height={sheetH} />
+      {cells?.map((c, i) => (
+        <rect
+          key={i}
+          x={c.x * sheetW}
+          y={c.y * sheetH}
+          width={c.width * sheetW}
+          height={c.height * sheetH}
+          fill="rgb(79 70 229 / 0.12)"
+          stroke="#4f46e5"
+          strokeWidth={1.5 / scale}
+        />
+      ))}
+    </svg>
   );
 }
 
