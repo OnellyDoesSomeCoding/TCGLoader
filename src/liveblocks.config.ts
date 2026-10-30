@@ -1,5 +1,5 @@
 import type { LiveList, LiveMap, LiveObject } from "@liveblocks/client";
-import type { Layer, Point } from "@/components/board/types";
+import type { Card, Layer, Point } from "@/components/board/types";
 
 declare global {
   interface Liveblocks {
@@ -15,6 +15,11 @@ declare global {
       layers: LiveMap<string, LiveObject<Layer>>;
       // Paint order, back to front.
       layerIds: LiveList<string>;
+      // Cards in each pile, keyed by the pile layer's id. The last card is the top.
+      // Optional because boards created before piles existed don't have them yet.
+      piles?: LiveMap<string, LiveList<Card>>;
+      // Cards in each person's hand, keyed by user id.
+      hands?: LiveMap<string, LiveList<Card>>;
     };
     UserMeta: {
       id: string;

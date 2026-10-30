@@ -36,6 +36,11 @@ export type TextLayer = {
   color: string;
 };
 
+/** Part of a source image to show, as fractions (0–1) of its full width and height. */
+export type Crop = { x: number; y: number; width: number; height: number };
+
+export const FULL_CROP: Crop = { x: 0, y: 0, width: 1, height: 1 };
+
 export type ImageLayer = {
   type: "image";
   x: number;
@@ -43,10 +48,36 @@ export type ImageLayer = {
   width: number;
   height: number;
   url: string;
+  // Set on cards cut from a sheet; missing means the whole image.
+  crop?: Crop;
+  // Face-down cards show the shared card back to everyone.
+  faceDown?: boolean;
 };
 
-export type Layer = ShapeLayer | StrokeLayer | TextLayer | ImageLayer;
+/** A stack of cards on the board. Its cards live in storage `piles[id]`, last = top. */
+export type PileLayer = {
+  type: "pile";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  name: string;
+  faceDown: boolean;
+};
+
+/** A card while it's off the board, in a pile or a hand. Width/height are its board size. */
+export type Card = {
+  url: string;
+  width: number;
+  height: number;
+  crop?: Crop;
+};
+
+export type Layer = ShapeLayer | StrokeLayer | TextLayer | ImageLayer | PileLayer;
 export type LayerType = Layer["type"];
+
+/** Where dragged cards will land when released. */
+export type DropTarget = { kind: "hand" } | { kind: "pile"; id: string };
 
 /** Read-only point list, as returned by Liveblocks' immutable storage snapshots. */
 export type Points = ReadonlyArray<ReadonlyArray<number>>;

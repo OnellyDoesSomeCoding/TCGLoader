@@ -2,13 +2,17 @@
 
 import { useStorage } from "@liveblocks/react/suspense";
 import { memo, useEffect, useRef } from "react";
+import { CardBack, CroppedImage, PileView } from "./CardArt";
 import { arrowHeadPath, smoothPath } from "./geometry";
 
 type LayerViewProps = {
   id: string;
   zoom: number;
   isEditing: boolean;
+  isDropTarget: boolean;
   onLayerPointerDown: (e: React.PointerEvent, id: string) => void;
+  onPileBodyPointerDown: (e: React.PointerEvent, id: string) => void;
+  onPileRename: (id: string) => void;
   onLayerDoubleClick: (id: string) => void;
   onTextChange: (id: string, text: string, height: number) => void;
   onTextEditEnd: (id: string) => void;
@@ -18,7 +22,10 @@ export const LayerView = memo(function LayerView({
   id,
   zoom,
   isEditing,
+  isDropTarget,
   onLayerPointerDown,
+  onPileBodyPointerDown,
+  onPileRename,
   onLayerDoubleClick,
   onTextChange,
   onTextEditEnd,
@@ -122,19 +129,44 @@ export const LayerView = memo(function LayerView({
       );
 
     case "image":
+      if (layer.faceDown) {
+        return (
+          <CardBack
+            {...common}
+            x={layer.x}
+            y={layer.y}
+            width={Math.max(layer.width, 1)}
+            height={Math.max(layer.height, 1)}
+          />
+        );
+      }
       return (
-        <image
+        <CroppedImage
           {...common}
-          href={layer.url}
+          url={layer.url}
+          crop={layer.crop}
           x={layer.x}
           y={layer.y}
           width={Math.max(layer.width, 1)}
           height={Math.max(layer.height, 1)}
-          preserveAspectRatio="none"
+        />
+      );
+
+    case "pile":
+      return (
+        <PileView
+          id={id}
+          layer={layer}
+          zoom={zoom}
+          highlighted={isDropTarget}
+          onTabPointerDown={common.onPointerDown}
+          onBodyPointerDown={(e) => onPileBodyPointerDown(e, id)}
+          onTabDoubleClick={() => onPileRename(id)}
         />
       );
   }
 });
+
 
 function TextEditor({
   text,

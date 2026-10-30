@@ -48,6 +48,8 @@ export function Toolbar({
   tool,
   onToolChange,
   onUploadClick,
+  onSheetUploadClick,
+  onNewPileClick,
   canUndo,
   canRedo,
   onUndo,
@@ -56,6 +58,8 @@ export function Toolbar({
   tool: Tool;
   onToolChange: (tool: Tool) => void;
   onUploadClick: () => void;
+  onSheetUploadClick: () => void;
+  onNewPileClick: () => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -75,6 +79,8 @@ export function Toolbar({
         ))}
         <div className="mx-2 my-0.5 border-t border-zinc-200" />
         <ToolButton icon="image" label="Upload image" onClick={onUploadClick} />
+        <ToolButton icon="sheet" label="Upload card sheet and cut it" onClick={onSheetUploadClick} />
+        <ToolButton icon="pile" label="New pile" onClick={onNewPileClick} />
       </div>
       <div className="flex flex-col gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-md">
         <ToolButton icon="undo" label="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo} />
@@ -101,6 +107,8 @@ const FILLS = ["transparent", "#ffc9c9", "#ffec99", "#b2f2bb", "#a5d8ff", "#d0bf
 const WIDTHS = [2, 4, 8];
 const FONT_SIZES = [16, 24, 36, 56];
 
+export type ContextAction = { label: string; icon: IconName; onClick: () => void; title?: string };
+
 /** What the style bar should offer, based on the selection or the active tool. */
 export type StyleControls = { color: boolean; fill: boolean; strokeWidth: boolean; fontSize: boolean };
 
@@ -109,6 +117,7 @@ export function StyleBar({
   controls,
   onChange,
   selectionActions,
+  contextActions = [],
 }: {
   style: Style;
   controls: StyleControls;
@@ -119,6 +128,8 @@ export function StyleBar({
     onDuplicate: () => void;
     onDelete: () => void;
   };
+  // Actions that depend on what is selected, e.g. "Cut into cards" or pile actions.
+  contextActions?: ContextAction[];
 }) {
   const hasStyle = controls.color || controls.fill || controls.strokeWidth || controls.fontSize;
   if (!hasStyle && !selectionActions) return null;
@@ -174,6 +185,19 @@ export function StyleBar({
         <>
           {hasStyle && <Divider />}
           <div className="flex items-center gap-0.5">
+            {contextActions.map((a) => (
+              <button
+                key={a.label}
+                type="button"
+                title={a.title ?? a.label}
+                onClick={a.onClick}
+                className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-brand hover:bg-brand/10"
+              >
+                <Icon name={a.icon} className="size-4" />
+                {a.label}
+              </button>
+            ))}
+            {contextActions.length > 0 && <div className="mx-1 h-6 w-px shrink-0 bg-zinc-200" />}
             <SmallButton icon="front" label="Bring to front" onClick={selectionActions.onBringToFront} />
             <SmallButton icon="back" label="Send to back" onClick={selectionActions.onSendToBack} />
             <SmallButton icon="duplicate" label="Duplicate (Ctrl+D)" onClick={selectionActions.onDuplicate} />

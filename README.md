@@ -15,7 +15,14 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
   - Select by clicking or dragging a box; move, resize, duplicate, bring to front or send to back.
   - Freehand pen, rectangle, ellipse, line, arrow and text boxes, with colors, fill, stroke width and font size.
   - Upload images by file picker, drag and drop, or paste.
+  - **Cut a card sheet into cards:** upload an uncut sheet with the sheet button, or select any image and click **Cut into cards**. Set columns × rows (presets include 10 × 7 for Tabletop Simulator decks), plus an optional outer margin and gap between cards in pixels. Each card reuses the uploaded sheet with a crop, so cutting is instant and keeps full quality.
   - Delete, and per-user undo/redo.
+- **Cards, hands and piles** (any image on the board is a card):
+  - **Your hand:** a tray at the bottom of the screen that only you can see. Others see how many cards you hold on your avatar. Drag cards into it, or select cards and click **Add to hand**. Drag a card out onto the board to play it face up, Shift + drag to play it face down, or drop it on a pile.
+  - **Piles** (draw piles, discard piles): create one with the **New pile** button, or select cards and click **Make pile**. Drop cards onto a pile to put them on top. Drag the top card off to put it on the board (Shift + drag puts it face down). Drag the dark name tab to move the pile; double-click the tab to rename it.
+  - **Pile actions** (select a pile): Draw, Draw several, Take top, Shuffle, Flip, Look through (only you see the cards), Rename, Duplicate (copies the cards too), Delete (deletes its cards too).
+  - **Flipping:** press **F** while hovering a card or pile. All face-down cards share one card-back pattern.
+  - Hand privacy is "honest": the app never shows other people's hands, but the data is sent to everyone on the board, so a technical user could read it in their browser's developer tools.
 
 ### Keyboard shortcuts
 
@@ -31,6 +38,8 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
 | Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) | Undo / Redo |
 | Ctrl+A / Ctrl+D | Select all / Duplicate |
 | Double-click text | Edit text |
+| F (while hovering) | Flip a card or pile |
+| Shift + drag from hand or pile | Play the card face down |
 | Esc | Deselect |
 
 ## Setup

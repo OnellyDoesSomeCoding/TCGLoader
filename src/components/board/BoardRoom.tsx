@@ -11,7 +11,7 @@ export function BoardRoom({ board }: { board: BoardInfo }) {
       <RoomProvider
         id={`board:${board.id}`}
         initialPresence={{ cursor: null, selection: [], pencilDraft: null, pencilColor: "#1e1e1e", pencilWidth: 4 }}
-        initialStorage={{ layers: new LiveMap(), layerIds: new LiveList([]) }}
+        initialStorage={{ layers: new LiveMap(), layerIds: new LiveList([]), piles: new LiveMap(), hands: new LiveMap() }}
       >
         <ClientSideSuspense fallback={<BoardLoading />}>
           <Canvas board={board} />
