@@ -6,10 +6,16 @@ import { CardBack, CroppedImage, PileView } from "./CardArt";
 import { isSideways } from "./cards";
 import { CounterView } from "./CounterView";
 import { arrowHeadPath, smoothPath } from "./geometry";
+import type { Layer, LayerType } from "./types";
+
+// Turned back upright when the board is turned for Player 2, so they stay readable.
+// Drawings turn with the board so arrows and circles still point at the right things.
+const UPRIGHT_TYPES = new Set<LayerType>(["text", "image", "pile", "counter"]);
 
 type LayerViewProps = {
   id: string;
   zoom: number;
+  flipped: boolean;
   isEditing: boolean;
   isDropTarget: boolean;
   onLayerPointerDown: (e: React.PointerEvent, id: string) => void;
@@ -23,7 +29,20 @@ type LayerViewProps = {
   onTextEditEnd: (id: string) => void;
 };
 
-export const LayerView = memo(function LayerView({
+export const LayerView = memo(function LayerView({ flipped, ...props }: LayerViewProps) {
+  const layer = useStorage((root) => root.layers[props.id]);
+  if (!layer) return null;
+
+  const content = <LayerContent layer={layer} {...props} />;
+  if (!flipped || !UPRIGHT_TYPES.has(layer.type)) return content;
+  // A half turn around its own center leaves the layer's footprint where it was.
+  const cx = layer.x + layer.width / 2;
+  const cy = layer.y + layer.height / 2;
+  return <g transform={`rotate(180 ${cx} ${cy})`}>{content}</g>;
+});
+
+function LayerContent({
+  layer,
   id,
   zoom,
   isEditing,
@@ -37,9 +56,7 @@ export const LayerView = memo(function LayerView({
   onLayerDoubleClick,
   onTextChange,
   onTextEditEnd,
-}: LayerViewProps) {
-  const layer = useStorage((root) => root.layers[id]);
-  if (!layer) return null;
+}: Omit<LayerViewProps, "flipped"> & { layer: Readonly<Layer> }) {
 
   const common = {
     onPointerDown: (e: React.PointerEvent) => onLayerPointerDown(e, id),
@@ -182,7 +199,7 @@ export const LayerView = memo(function LayerView({
         />
       );
   }
-});
+}
 
 
 function TextEditor({

@@ -3,10 +3,16 @@ import type { Camera, Handle, Layer, Point, Points, XYWH } from "./types";
 type Bounded = Pick<XYWH, "x" | "y" | "width" | "height">;
 
 export function screenToWorld(clientX: number, clientY: number, rect: DOMRect, camera: Camera): Point {
+  const scale = camera.flipped ? -camera.zoom : camera.zoom;
   return {
-    x: (clientX - rect.left - camera.x) / camera.zoom,
-    y: (clientY - rect.top - camera.y) / camera.zoom,
+    x: (clientX - rect.left - camera.x) / scale,
+    y: (clientY - rect.top - camera.y) / scale,
   };
+}
+
+/** Turns the camera to the other side of the table, keeping the same spot in the middle of the viewport. */
+export function flipCamera(camera: Camera, viewportWidth: number, viewportHeight: number): Camera {
+  return { ...camera, flipped: !camera.flipped, x: viewportWidth - camera.x, y: viewportHeight - camera.y };
 }
 
 export function boundsOf(items: readonly Bounded[]): XYWH | null {

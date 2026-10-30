@@ -1,6 +1,7 @@
 export type Point = { x: number; y: number };
 export type XYWH = { x: number; y: number; width: number; height: number };
-export type Camera = { x: number; y: number; zoom: number };
+// `flipped` is Player 2's seat: the board is turned 180° so their side of the table is at the bottom.
+export type Camera = { x: number; y: number; zoom: number; flipped: boolean };
 
 export type ShapeLayer = {
   type: "rectangle" | "ellipse";

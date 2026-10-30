@@ -33,6 +33,7 @@ import {
 import { COUNTER_SIZE } from "./CounterView";
 import { CutDialog, type CutOptions } from "./CutDialog";
 import {
+  flipCamera,
   normalizePoints,
   rectFromPoints,
   rectsIntersect,
@@ -104,6 +105,18 @@ type Gesture =
   | { mode: "drawing"; points: number[][] };
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+// Which side of the table you sit on is remembered per board, in this browser only.
+const seatKey = (boardId: string) => `tcg-seat:${boardId}`;
+
+function initialCamera(boardId: string): Camera {
+  const camera: Camera = { x: 0, y: 0, zoom: 1, flipped: false };
+  try {
+    // The board fills the window, so the window size is the viewport size.
+    if (localStorage.getItem(seatKey(boardId)) === "2") return flipCamera(camera, window.innerWidth, window.innerHeight);
+  } catch {}
+  return camera;
+}
 
 function sameDrop(a: DropTarget | null, b: DropTarget | null) {
   if (a === null || b === null) return a === b;
@@ -196,7 +209,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
   // Latest pointer position on the board, for "F flips the card under the cursor".
   const cursorRef = useRef<Point | null>(null);
 
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
+  const [camera, setCamera] = useState<Camera>(() => initialCamera(board.id));
   const [tool, setTool] = useState<Tool>("select");
   const [style, setStyle] = useState<Style>(DEFAULT_STYLE);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -756,18 +769,26 @@ export function Canvas({ board }: { board: BoardInfo }) {
     updateMyPresence({ selection: ids }, { addToHistory: true });
   }
 
+  /** Zooms keeping the point under (screenX, screenY) still, whichever way the board is turned. */
   function zoomAt(screenX: number, screenY: number, factor: number) {
     setCamera((c) => {
       const zoom = clamp(c.zoom * factor, MIN_ZOOM, MAX_ZOOM);
-      const wx = (screenX - c.x) / c.zoom;
-      const wy = (screenY - c.y) / c.zoom;
-      return { zoom, x: screenX - wx * zoom, y: screenY - wy * zoom };
+      const k = zoom / c.zoom;
+      return { ...c, zoom, x: screenX - (screenX - c.x) * k, y: screenY - (screenY - c.y) * k };
     });
   }
 
   function zoomFromCenter(factor: number) {
     const rect = svgRef.current!.getBoundingClientRect();
     zoomAt(rect.width / 2, rect.height / 2, factor);
+  }
+
+  function changeSeat(flipped: boolean) {
+    const rect = svgRef.current!.getBoundingClientRect();
+    setCamera((c) => (c.flipped === flipped ? c : flipCamera(c, rect.width, rect.height)));
+    try {
+      localStorage.setItem(seatKey(board.id), flipped ? "2" : "1");
+    } catch {}
   }
 
   function isOverHand(clientX: number, clientY: number) {
@@ -1459,12 +1480,13 @@ export function Canvas({ board }: { board: BoardInfo }) {
         }}
       >
         <CardBackDefs />
-        <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.zoom})`}>
+        <g transform={`translate(${camera.x} ${camera.y})${camera.flipped ? " rotate(180)" : ""} scale(${camera.zoom})`}>
           {layerIds.map((id) => (
             <LayerView
               key={id}
               id={id}
               zoom={camera.zoom}
+              flipped={camera.flipped}
               isEditing={editingId === id}
               isDropTarget={dropTarget?.kind === "pile" && dropTarget.id === id}
               {...stableHandlers}
@@ -1493,7 +1515,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
           )}
           <OthersDrafts />
           {myDraft && <DraftPath points={myDraft} color={style.color} width={style.strokeWidth} />}
-          <Cursors zoom={camera.zoom} />
+          <Cursors zoom={camera.zoom} flipped={camera.flipped} />
         </g>
       </svg>
 
@@ -1562,6 +1584,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
         highlighted={dropTarget?.kind === "hand"}
         draggingIndex={handDrag?.index ?? null}
         onCardPointerDown={onHandCardPointerDown}
+        flipped={camera.flipped}
+        onFlippedChange={changeSeat}
       />
 
       {handDrag && (

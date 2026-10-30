@@ -146,8 +146,8 @@ export function DraftPath({
   );
 }
 
-/** Other people's cursors with their usernames, kept the same size at any zoom. */
-export function Cursors({ zoom }: { zoom: number }) {
+/** Other people's cursors with their usernames, kept the same size at any zoom and upright when the board is turned. */
+export function Cursors({ zoom, flipped }: { zoom: number; flipped: boolean }) {
   const others = useOthersMapped((o) => ({ cursor: o.presence.cursor, info: o.info }), shallow);
   return (
     <>
@@ -157,7 +157,7 @@ export function Cursors({ zoom }: { zoom: number }) {
         return (
           <g
             key={connectionId}
-            transform={`translate(${cursor.x} ${cursor.y}) scale(${1 / zoom})`}
+            transform={`translate(${cursor.x} ${cursor.y})${flipped ? " rotate(180)" : ""} scale(${1 / zoom})`}
             pointerEvents="none"
             style={{ transition: "transform 80ms linear" }}
           >
