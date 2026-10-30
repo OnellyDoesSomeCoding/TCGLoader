@@ -14,7 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "TCGLoader",
-  description: "Collaborative whiteboards you can draw on with friends in real time.",
+  description:
+    "Play any card game online with friends. Upload card sheets, cut them into decks and play on a shared table in real time.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

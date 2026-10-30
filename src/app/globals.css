@@ -16,7 +16,35 @@
   --font-mono: var(--font-geist-mono);
 }
 
+@theme {
+  --animate-cursor-a: cursor-a 9s ease-in-out infinite;
+  --animate-cursor-b: cursor-b 11s ease-in-out infinite;
+
+  @keyframes cursor-a {
+    0%, 100% { transform: translate(0, 0); }
+    35% { transform: translate(-26px, 16px); }
+    65% { transform: translate(12px, 28px); }
+  }
+
+  @keyframes cursor-b {
+    0%, 100% { transform: translate(0, 0); }
+    40% { transform: translate(22px, -14px); }
+    70% { transform: translate(-10px, 12px); }
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+/* Same dot grid as the board canvas. */
+@utility bg-dots {
+  background-image: radial-gradient(#d4d4d8 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Same stripes as the board's card back pattern. */
+@utility card-back-stripes {
+  background: repeating-linear-gradient(45deg, #3730a3 0 5px, #4338ca 5px 10px);
 }
