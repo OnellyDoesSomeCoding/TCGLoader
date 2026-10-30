@@ -1,0 +1,181 @@
+"use client";
+
+import { useStorage } from "@liveblocks/react/suspense";
+import { memo, useEffect, useRef } from "react";
+import { arrowHeadPath, smoothPath } from "./geometry";
+
+type LayerViewProps = {
+  id: string;
+  zoom: number;
+  isEditing: boolean;
+  onLayerPointerDown: (e: React.PointerEvent, id: string) => void;
+  onLayerDoubleClick: (id: string) => void;
+  onTextChange: (id: string, text: string, height: number) => void;
+  onTextEditEnd: (id: string) => void;
+};
+
+export const LayerView = memo(function LayerView({
+  id,
+  zoom,
+  isEditing,
+  onLayerPointerDown,
+  onLayerDoubleClick,
+  onTextChange,
+  onTextEditEnd,
+}: LayerViewProps) {
+  const layer = useStorage((root) => root.layers[id]);
+  if (!layer) return null;
+
+  const common = {
+    onPointerDown: (e: React.PointerEvent) => onLayerPointerDown(e, id),
+  };
+
+  switch (layer.type) {
+    case "rectangle":
+      return (
+        <rect
+          {...common}
+          x={layer.x}
+          y={layer.y}
+          width={layer.width}
+          height={layer.height}
+          rx={4}
+          fill={layer.fill}
+          stroke={layer.stroke}
+          strokeWidth={layer.strokeWidth}
+        />
+      );
+
+    case "ellipse":
+      return (
+        <ellipse
+          {...common}
+          cx={layer.x + layer.width / 2}
+          cy={layer.y + layer.height / 2}
+          rx={layer.width / 2}
+          ry={layer.height / 2}
+          fill={layer.fill}
+          stroke={layer.stroke}
+          strokeWidth={layer.strokeWidth}
+        />
+      );
+
+    case "path":
+    case "line":
+    case "arrow": {
+      const d =
+        layer.type === "path"
+          ? smoothPath(layer.points)
+          : `M ${layer.points[0][0]} ${layer.points[0][1]} L ${layer.points[1][0]} ${layer.points[1][1]}`;
+      const head =
+        layer.type === "arrow" ? arrowHeadPath(layer.points[0], layer.points[1], layer.strokeWidth) : "";
+      return (
+        <g {...common} transform={`translate(${layer.x} ${layer.y})`}>
+          {/* Wide invisible stroke so thin lines are easy to click. */}
+          <path
+            d={`${d} ${head}`}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={Math.max(layer.strokeWidth, 14 / zoom)}
+            strokeLinecap="round"
+          />
+          <path
+            d={`${d} ${head}`}
+            fill="none"
+            stroke={layer.stroke}
+            strokeWidth={layer.strokeWidth}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </g>
+      );
+    }
+
+    case "text":
+      return (
+        <foreignObject
+          {...common}
+          onDoubleClick={() => onLayerDoubleClick(id)}
+          x={layer.x}
+          y={layer.y}
+          width={Math.max(layer.width, 1)}
+          height={Math.max(layer.height, 1)}
+          overflow="visible"
+        >
+          {isEditing ? (
+            <TextEditor
+              text={layer.text}
+              fontSize={layer.fontSize}
+              color={layer.color}
+              onChange={(text, height) => onTextChange(id, text, height)}
+              onDone={() => onTextEditEnd(id)}
+            />
+          ) : (
+            <div
+              className="h-full w-full cursor-default whitespace-pre-wrap break-words p-1 leading-snug select-none"
+              style={{ fontSize: layer.fontSize, color: layer.color }}
+            >
+              {layer.text}
+            </div>
+          )}
+        </foreignObject>
+      );
+
+    case "image":
+      return (
+        <image
+          {...common}
+          href={layer.url}
+          x={layer.x}
+          y={layer.y}
+          width={Math.max(layer.width, 1)}
+          height={Math.max(layer.height, 1)}
+          preserveAspectRatio="none"
+        />
+      );
+  }
+});
+
+function TextEditor({
+  text,
+  fontSize,
+  color,
+  onChange,
+  onDone,
+}: {
+  text: string;
+  fontSize: number;
+  color: string;
+  onChange: (text: string, height: number) => void;
+  onDone: () => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+
+  return (
+    <textarea
+      ref={ref}
+      value={text}
+      placeholder="Type something"
+      onPointerDown={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        const el = e.currentTarget;
+        el.style.height = "auto";
+        onChange(el.value, el.scrollHeight);
+        el.style.height = "";
+      }}
+      onBlur={onDone}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") e.currentTarget.blur();
+      }}
+      className="block h-full w-full resize-none overflow-hidden bg-transparent p-1 leading-snug outline-none placeholder:text-zinc-400"
+      style={{ fontSize, color }}
+    />
+  );
+}
