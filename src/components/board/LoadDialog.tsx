@@ -21,23 +21,23 @@ type Item = {
   file: File;
   size: { width: number; height: number } | null;
   failed: boolean;
-  grid: Grid;
 };
 
-function cellsOf(item: Item) {
+/** The cards one image is cut into. Every image uses the same grid. */
+function cellsOf(item: Item, grid: Grid) {
   if (!item.size) return null;
-  const { columns, rows, margin, gap } = item.grid;
+  const { columns, rows, margin, gap } = grid;
   return gridCells(item.size.width, item.size.height, columns, rows, margin, gap);
 }
 
 /** Splits picked files into new items and the names of images too large to upload. */
-function toItems(files: File[], grid: Grid) {
+function toItems(files: File[]) {
   const items: Item[] = [];
   const tooBig: string[] = [];
   for (const file of files) {
     if (!file.type.startsWith("image/")) continue;
     if (file.size > MAX_IMAGE_BYTES) tooBig.push(file.name);
-    else items.push({ key: nanoid(), file, size: null, failed: false, grid });
+    else items.push({ key: nanoid(), file, size: null, failed: false });
   }
   return { items, tooBig };
 }
@@ -78,10 +78,11 @@ export function LoadDialog({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const measuring = useRef(new Set<string>());
-  const [initial] = useState(() => toItems(files, DEFAULT_GRID));
+  const [initial] = useState(() => toItems(files));
   const [items, setItems] = useState<Item[]>(initial.items);
   const [activeKey, setActiveKey] = useState<string | null>(initial.items[0]?.key ?? null);
   const [skipped, setSkipped] = useState<string[]>(initial.tooBig);
+  const [grid, setGrid] = useState<Grid>(DEFAULT_GRID);
   const [name, setName] = useState("Pile");
   const [shuffle, setShuffle] = useState(false);
   const [faceDown, setFaceDown] = useState(false);
@@ -101,8 +102,7 @@ export function LoadDialog({
   }, [items]);
 
   function addFiles(added: File[]) {
-    // Sheets in a set usually share a layout, so new ones start with the grid being edited.
-    const next = toItems(added, active?.grid ?? DEFAULT_GRID);
+    const next = toItems(added);
     setSkipped(next.tooBig);
     if (next.items.length === 0) return;
     setItems((current) => [...current, ...next.items]);
@@ -117,16 +117,12 @@ export function LoadDialog({
     if (activeKey === key) setActiveKey(rest[Math.min(index, rest.length - 1)]?.key ?? null);
   }
 
-  function setGrid(key: string, patch: Partial<Grid>) {
-    setItems((current) => current.map((i) => (i.key === key ? { ...i, grid: { ...i.grid, ...patch } } : i)));
-  }
-
-  const activeCells = active ? cellsOf(active) : null;
+  const activeCells = active ? cellsOf(active, grid) : null;
   const ready = items.every((i) => i.size || i.failed);
   const sheets: LoadSheet[] = [];
   let broken = 0;
   for (const item of items) {
-    const cells = cellsOf(item);
+    const cells = cellsOf(item, grid);
     if (item.size && cells) sheets.push({ file: item.file, ...item.size, cells });
     else if (item.size) broken++;
   }
@@ -173,7 +169,7 @@ export function LoadDialog({
 
         <div className="flex gap-2 overflow-x-auto pb-1">
           {items.map((item) => {
-            const cells = cellsOf(item);
+            const cells = cellsOf(item, grid);
             return (
               <div key={item.key} className="relative shrink-0">
                 <button
@@ -232,7 +228,7 @@ export function LoadDialog({
               )}
             </div>
 
-            <GridFields grid={active.grid} onChange={(patch) => setGrid(active.key, patch)} />
+            <GridFields grid={grid} onChange={(patch) => setGrid((g) => ({ ...g, ...patch }))} />
 
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span className={active.size && !activeCells ? "text-red-600" : "text-zinc-600"}>
@@ -242,15 +238,7 @@ export function LoadDialog({
                     ? `${activeCells.length} cards from ${active.file.name}`
                     : "Margin and gap are too large for this image."}
               </span>
-              {items.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => setItems((current) => current.map((i) => ({ ...i, grid: active.grid })))}
-                  className="rounded-md px-2 py-1 text-xs font-medium text-brand hover:bg-brand/10"
-                >
-                  Use this grid for all images
-                </button>
-              )}
+              {items.length > 1 && <span className="text-xs text-zinc-500">The grid applies to all images.</span>}
             </div>
           </>
         )}
