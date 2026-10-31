@@ -5,12 +5,13 @@ import { memo, useEffect, useRef } from "react";
 import { CardBack, CroppedImage, PileView } from "./CardArt";
 import { isSideways } from "./cards";
 import { CounterView } from "./CounterView";
+import { ChipView, CoinView, DieView, PawnView, TimerView } from "./GamePieces";
 import { arrowHeadPath, smoothPath } from "./geometry";
 import type { Layer, LayerType } from "./types";
 
 // Turned back upright when the board is turned for Player 2, so they stay readable.
 // Drawings turn with the board so arrows and circles still point at the right things.
-const UPRIGHT_TYPES = new Set<LayerType>(["text", "image", "pile", "counter"]);
+const UPRIGHT_TYPES = new Set<LayerType>(["text", "image", "pile", "counter", "die", "coin", "pawn", "chip", "timer"]);
 
 type LayerViewProps = {
   id: string;
@@ -24,6 +25,8 @@ type LayerViewProps = {
   onCounterStep: (e: React.PointerEvent, id: string, delta: number) => void;
   onCounterEdit: (id: string) => void;
   onCardRotate: (id: string) => void;
+  // Double-clicking a kit piece rolls a die, tosses a coin, labels a chip or starts a timer.
+  onPieceDoubleClick: (id: string) => void;
   onLayerDoubleClick: (id: string) => void;
   onTextChange: (id: string, text: string, height: number) => void;
   onTextEditEnd: (id: string) => void;
@@ -53,6 +56,7 @@ function LayerContent({
   onCounterStep,
   onCounterEdit,
   onCardRotate,
+  onPieceDoubleClick,
   onLayerDoubleClick,
   onTextChange,
   onTextEditEnd,
@@ -198,6 +202,21 @@ function LayerContent({
           onStep={(e, delta) => onCounterStep(e, id, delta)}
         />
       );
+
+    case "die":
+      return <DieView layer={layer} onPointerDown={common.onPointerDown} onDoubleClick={() => onPieceDoubleClick(id)} />;
+
+    case "coin":
+      return <CoinView layer={layer} onPointerDown={common.onPointerDown} onDoubleClick={() => onPieceDoubleClick(id)} />;
+
+    case "pawn":
+      return <PawnView layer={layer} onPointerDown={common.onPointerDown} />;
+
+    case "chip":
+      return <ChipView layer={layer} onPointerDown={common.onPointerDown} onDoubleClick={() => onPieceDoubleClick(id)} />;
+
+    case "timer":
+      return <TimerView layer={layer} onPointerDown={common.onPointerDown} onDoubleClick={() => onPieceDoubleClick(id)} />;
   }
 }
 

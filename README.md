@@ -13,16 +13,24 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
 - **Canvas:**
   - Infinite canvas with pan and zoom.
   - Select by clicking or dragging a box; move, resize, duplicate, bring to front or send to back.
+  - **Groups:** select several parts and click **Group** (Ctrl+G) to keep them together. Clicking any part of a group selects all of it, so it moves, resizes and duplicates as one. **Ungroup** (Ctrl+Shift+G) splits it again.
+  - The **Cards** button in the toolbar opens a menu with the card tools: upload an image, upload a card sheet, load images into a pile, new pile and new counter.
   - Freehand pen, rectangle, ellipse, line, arrow and text boxes, with colors, fill, stroke width and font size.
   - Upload images by file picker, drag and drop, or paste.
-  - **Cut a card sheet into cards:** upload an uncut sheet with the sheet button, or select any image and click **Cut into cards**. Set columns × rows (presets include 10 × 7 for Tabletop Simulator decks), plus an optional outer margin and gap between cards in pixels. Each card reuses the uploaded sheet with a crop, so cutting is instant and keeps full quality.
+  - **Cut a card sheet into cards:** upload an uncut sheet with **Cards → Upload card sheet**, or select any image and click **Cut into cards**. Set columns × rows (presets include 10 × 7 for Tabletop Simulator decks), plus an optional outer margin and gap between cards in pixels. Each card reuses the uploaded sheet with a crop, so cutting is instant and keeps full quality.
   - Delete, and per-user undo/redo.
 - **Cards, hands and piles** (any image on the board is a card):
   - **Your hand:** a tray at the bottom of the screen that only you can see. Others see how many cards you hold on your avatar. Drag cards into it, or select cards and click **Add to hand**. Drag a card out onto the board to play it face up, Shift + drag to play it face down, or drop it on a pile. Hover a card in your hand to see a bigger preview.
   - **Player 1 / Player 2:** the switch on top of your hand turns the board 180° so you can sit on the other side of the table, with your side at the bottom. Cards, text, piles and counters stay upright; drawings and arrows turn with the board. Only your view changes, and this browser remembers your side for each board.
-  - **Piles** (draw piles, discard piles): create one with the **New pile** button, or select cards and click **Make pile**. Drop cards onto a pile to put them on top. Drag the top card off to put it on the board (Shift + drag puts it face down). Drag the dark name tab to move the pile; double-click the tab to rename it.
+  - **Piles** (draw piles, discard piles): create one with **Cards → New pile**, or select cards and click **Make pile**. Drop cards onto a pile to put them on top. Drag the top card off to put it on the board (Shift + drag puts it face down). Drag the dark name tab to move the pile; double-click the tab to rename it.
   - **Pile actions** (select a pile): Draw, Draw several, Take top, Shuffle, Flip, Look through (only you see the cards; a large preview of one card, with a slider, a strip of small cards and the arrow keys to move through the pile), Rename, Duplicate (copies the cards too), Delete (deletes its cards too).
   - **Flipping:** press **F** while hovering a card or pile. All face-down cards share one card-back pattern.
+  - **Board game kit** (the die button under **Cards**): pieces that everyone sees and that recolor with the color swatches.
+    - **Die:** double-click or click **Roll** to roll it; every player sees the same result and a tumble. The **d6** action switches between d4, d6, d8, d10, d12 and d20. Select several dice and click **Roll all** to see the total.
+    - **Coin:** double-click, click **Toss** or press **F** to toss it for heads or tails.
+    - **Pawn:** a playing piece to move around.
+    - **Marker chip:** a round token with a short label (up to 8 characters) for damage, status effects or turn order. Double-click to change the label.
+    - **Sand timer:** a shared countdown of 30 s, 1 min, 2 min or 5 min. Double-click or click **Start** / **Reset**; it flashes red when time runs out.
   - Hand privacy is "honest": the app never shows other people's hands, but the data is sent to everyone on the board, so a technical user could read it in their browser's developer tools.
 
 ### Keyboard shortcuts
@@ -38,8 +46,9 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
 | Delete / Backspace | Delete selection |
 | Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) | Undo / Redo |
 | Ctrl+A / Ctrl+D | Select all / Duplicate |
+| Ctrl+G / Ctrl+Shift+G | Group / Ungroup |
 | Double-click text | Edit text |
-| F (while hovering) | Flip a card or pile |
+| F (while hovering) | Flip a card or pile, toss a coin |
 | Shift + drag from hand or pile | Play the card face down |
 | Esc | Deselect |
 

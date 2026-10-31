@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+import type { PieceKind } from "./GamePieces";
 import { Icon, type IconName } from "./Icon";
 import type { Style, Tool } from "./types";
 
@@ -52,6 +54,7 @@ export function Toolbar({
   onLoadClick,
   onNewPileClick,
   onNewCounterClick,
+  onAddPiece,
   canUndo,
   canRedo,
   onUndo,
@@ -64,6 +67,7 @@ export function Toolbar({
   onLoadClick: () => void;
   onNewPileClick: () => void;
   onNewCounterClick: () => void;
+  onAddPiece: (kind: PieceKind) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -82,16 +86,101 @@ export function Toolbar({
           />
         ))}
         <div className="mx-2 my-0.5 border-t border-zinc-200" />
-        <ToolButton icon="image" label="Upload image" onClick={onUploadClick} />
-        <ToolButton icon="sheet" label="Upload card sheet and cut it" onClick={onSheetUploadClick} />
-        <ToolButton icon="load" label="Load images and cut them into a pile" onClick={onLoadClick} />
-        <ToolButton icon="pile" label="New pile" onClick={onNewPileClick} />
-        <ToolButton icon="counter" label="New counter (life, damage, mana…)" onClick={onNewCounterClick} />
+        <MenuButton
+          icon="cards"
+          label="Cards"
+          items={[
+            { icon: "image", label: "Upload image", onClick: onUploadClick },
+            { icon: "sheet", label: "Upload card sheet and cut it", onClick: onSheetUploadClick },
+            { icon: "load", label: "Load images into a pile", onClick: onLoadClick },
+            { icon: "pile", label: "New pile", onClick: onNewPileClick },
+            { icon: "counter", label: "New counter", onClick: onNewCounterClick },
+          ]}
+        />
+        <MenuButton
+          icon="die"
+          label="Board game kit"
+          items={[
+            { icon: "die", label: "Die (d4 to d20)", onClick: () => onAddPiece("die") },
+            { icon: "coin", label: "Coin", onClick: () => onAddPiece("coin") },
+            { icon: "pawn", label: "Pawn", onClick: () => onAddPiece("pawn") },
+            { icon: "chip", label: "Marker chip", onClick: () => onAddPiece("chip") },
+            { icon: "timer", label: "Sand timer", onClick: () => onAddPiece("timer") },
+          ]}
+        />
       </div>
       <div className="flex flex-col gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-md">
         <ToolButton icon="undo" label="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo} />
         <ToolButton icon="redo" label="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={onRedo} />
       </div>
+    </div>
+  );
+}
+
+type MenuItem = { icon: IconName; label: string; onClick: () => void };
+
+/** One toolbar button that opens a menu of tools beside the toolbar. */
+function MenuButton({ icon, label, items }: { icon: IconName; label: string; items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        title={label}
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={`relative grid size-10 place-items-center rounded-lg transition ${
+          open ? "bg-brand text-white" : "text-zinc-700 hover:bg-zinc-100"
+        }`}
+      >
+        <Icon name={icon} />
+        {/* Corner mark showing the button opens a menu. */}
+        <svg viewBox="0 0 6 6" className="absolute bottom-1 right-1 size-1.5" aria-hidden>
+          <path d="M6 0v6H0z" fill="currentColor" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-full top-0 ml-3 flex w-64 flex-col gap-0.5 rounded-xl border border-zinc-200 bg-white p-1 shadow-md"
+        >
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                item.onClick();
+              }}
+              className="flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              <Icon name={item.icon} className="size-[18px] shrink-0" />
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -133,6 +222,9 @@ export function StyleBar({
     onSendToBack: () => void;
     onDuplicate: () => void;
     onDelete: () => void;
+    // Left out when there's nothing to group or ungroup.
+    onGroup?: () => void;
+    onUngroup?: () => void;
   };
   // Actions that depend on what is selected, e.g. "Cut into cards" or pile actions.
   contextActions?: ContextAction[];
@@ -204,6 +296,12 @@ export function StyleBar({
               </button>
             ))}
             {contextActions.length > 0 && <div className="mx-1 h-6 w-px shrink-0 bg-zinc-200" />}
+            {selectionActions.onGroup && (
+              <SmallButton icon="group" label="Group (Ctrl+G)" onClick={selectionActions.onGroup} />
+            )}
+            {selectionActions.onUngroup && (
+              <SmallButton icon="ungroup" label="Ungroup (Ctrl+Shift+G)" onClick={selectionActions.onUngroup} />
+            )}
             <SmallButton icon="front" label="Bring to front" onClick={selectionActions.onBringToFront} />
             <SmallButton icon="back" label="Send to back" onClick={selectionActions.onSendToBack} />
             <SmallButton icon="duplicate" label="Duplicate (Ctrl+D)" onClick={selectionActions.onDuplicate} />

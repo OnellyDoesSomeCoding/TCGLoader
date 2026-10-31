@@ -81,6 +81,66 @@ export type CounterLayer = {
   color: string;
 };
 
+// Board game kit pieces. `rolls` and `tosses` count up on every roll or toss, so everyone's
+// screen can play the animation, even when the result is the same as before.
+
+/** A die with 4, 6, 8, 10, 12 or 20 sides. */
+export type DieLayer = {
+  type: "die";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  sides: number;
+  value: number;
+  rolls: number;
+  color: string;
+};
+
+export type CoinLayer = {
+  type: "coin";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  heads: boolean;
+  tosses: number;
+  color: string;
+};
+
+/** A playing piece to move around. */
+export type PawnLayer = {
+  type: "pawn";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: string;
+};
+
+/** A round marker with a short label, for damage, status effects, turn order and the like. */
+export type ChipLayer = {
+  type: "chip";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+  color: string;
+};
+
+/** A countdown everyone sees. `endsAt` is when it runs out (ms since epoch), or null when stopped. */
+export type TimerLayer = {
+  type: "timer";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  seconds: number;
+  endsAt: number | null;
+  color: string;
+};
+
 /** A card while it's off the board, in a pile or a hand. Width/height are its board size. */
 export type Card = {
   url: string;
@@ -89,7 +149,23 @@ export type Card = {
   crop?: Crop;
 };
 
-export type Layer = ShapeLayer | StrokeLayer | TextLayer | ImageLayer | PileLayer | CounterLayer;
+/** Layers grouped together share a `groupId`, so they're selected and moved as one. */
+type Grouping = { groupId?: string };
+
+export type Layer = (
+  | ShapeLayer
+  | StrokeLayer
+  | TextLayer
+  | ImageLayer
+  | PileLayer
+  | CounterLayer
+  | DieLayer
+  | CoinLayer
+  | PawnLayer
+  | ChipLayer
+  | TimerLayer
+) &
+  Grouping;
 export type LayerType = Layer["type"];
 
 /** Where dragged cards will land when released. */

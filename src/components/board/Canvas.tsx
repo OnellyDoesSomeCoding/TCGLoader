@@ -32,6 +32,7 @@ import {
 } from "./cards";
 import { COUNTER_SIZE } from "./CounterView";
 import { CutDialog, type CutOptions } from "./CutDialog";
+import { DIE_SIDES, MAX_CHIP_LABEL, TIMER_LENGTHS, formatLength, newPiece, rollDie, type PieceKind } from "./GamePieces";
 import {
   flipCamera,
   normalizePoints,
@@ -77,6 +78,10 @@ const MAX_COUNTER = 99999;
 
 // Layers that have a stroke color and width.
 const STROKED_TYPES: LayerType[] = ["rectangle", "ellipse", "path", "line", "arrow"];
+// Layers with a single `color`.
+const COLORED_TYPES: LayerType[] = ["text", "counter", "die", "coin", "pawn", "chip", "timer"];
+// Layers that keep their shape when resized.
+const KEEP_ASPECT_TYPES: LayerType[] = ["image", "pile", "counter", "die", "coin", "pawn", "chip", "timer"];
 
 const TOOL_SHORTCUTS: Record<string, Tool> = {
   v: "select",
@@ -116,6 +121,16 @@ function initialCamera(boardId: string): Camera {
     if (localStorage.getItem(seatKey(boardId)) === "2") return flipCamera(camera, window.innerWidth, window.innerHeight);
   } catch {}
   return camera;
+}
+
+/** `ids` plus every layer grouped with one of them, in paint order. */
+function withGroups(layers: Liveblocks["Storage"]["layers"], order: readonly string[], ids: readonly string[]) {
+  const groups = new Set(ids.map((id) => layers.get(id)?.get("groupId")).filter((g) => g !== undefined));
+  if (groups.size === 0) return [...ids];
+  return order.filter((id) => {
+    const groupId = layers.get(id)?.get("groupId");
+    return ids.includes(id) || (groupId !== undefined && groups.has(groupId));
+  });
 }
 
 function sameDrop(a: DropTarget | null, b: DropTarget | null) {
@@ -270,6 +285,29 @@ export function Canvas({ board }: { board: BoardInfo }) {
     shallow,
   );
 
+  // Each selected layer's group, or null if it isn't in one.
+  const selectedGroups = useStorage(
+    useCallback((root) => selection.map((id) => root.layers[id]?.groupId ?? null), [selection]),
+    shallow,
+  );
+  const canUngroup = selectedGroups.some((g) => g !== null);
+  // Grouping again is pointless when the selection is already exactly one group.
+  const canGroup = selection.length > 1 && !(selectedGroups[0] && selectedGroups.every((g) => g === selectedGroups[0]));
+
+  // A single selected die's or timer's settings, shown on their actions.
+  const pieceSettings = useStorage(
+    useCallback(
+      (root) => {
+        const l = selection.length === 1 ? root.layers[selection[0]] : undefined;
+        if (l?.type === "die") return { sides: l.sides, seconds: 0, running: false };
+        if (l?.type === "timer") return { sides: 0, seconds: l.seconds, running: l.endsAt !== null };
+        return null;
+      },
+      [selection],
+    ),
+    shallow,
+  );
+
   // The first selected layer's style, so the style bar reflects what is selected.
   const selectedStyle = useStorage(
     useCallback(
@@ -277,7 +315,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
         const l = selection.length > 0 ? root.layers[selection[0]] : undefined;
         if (!l || l.type === "image" || l.type === "pile") return null;
         if (l.type === "text") return { color: l.color, fontSize: l.fontSize };
-        if (l.type === "counter") return { color: l.color };
+        if ("color" in l) return { color: l.color };
         if (l.type === "rectangle" || l.type === "ellipse") {
           return { color: l.stroke, fill: l.fill, strokeWidth: l.strokeWidth };
         }
@@ -333,11 +371,29 @@ export function Canvas({ board }: { board: BoardInfo }) {
 
   const selectInRect = useMutation(({ storage, setMyPresence }, rect: XYWH, additive: readonly string[]) => {
     const ids = [...additive];
-    for (const id of storage.get("layerIds").toJSON()) {
+    const order = storage.get("layerIds").toJSON();
+    for (const id of order) {
       const l = storage.get("layers").get(id);
       if (l && !ids.includes(id) && rectsIntersect(rect, l.toJSON())) ids.push(id);
     }
-    setMyPresence({ selection: ids });
+    setMyPresence({ selection: withGroups(storage.get("layers"), order, ids) });
+  }, []);
+
+  /** The layer and everything grouped with it. */
+  const groupOf = useMutation(
+    ({ storage }, id: string) => withGroups(storage.get("layers"), storage.get("layerIds").toJSON(), [id]),
+    [],
+  );
+
+  /** Puts the selected layers in one new group, taking them out of any group they were in. */
+  const groupSelection = useMutation(({ storage, self }) => {
+    if (self.presence.selection.length < 2) return;
+    const groupId = nanoid();
+    for (const id of self.presence.selection) storage.get("layers").get(id)?.update({ groupId });
+  }, []);
+
+  const ungroupSelection = useMutation(({ storage, self }) => {
+    for (const id of self.presence.selection) storage.get("layers").get(id)?.delete("groupId");
   }, []);
 
   const selectAll = useMutation(({ storage, setMyPresence }) => {
@@ -363,6 +419,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
     const layers = storage.get("layers");
     const order = storage.get("layerIds");
     const copies: string[] = [];
+    // Copies of a group form a new group of their own.
+    const newGroupIds = new Map<string, string>();
     for (const id of order.toJSON()) {
       if (!self.presence.selection.includes(id)) continue;
       const l = layers.get(id);
@@ -370,6 +428,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
       const copy = { ...l.toJSON() };
       copy.x += 20;
       copy.y += 20;
+      if (copy.groupId) {
+        if (!newGroupIds.has(copy.groupId)) newGroupIds.set(copy.groupId, nanoid());
+        copy.groupId = newGroupIds.get(copy.groupId);
+      }
       const copyId = nanoid();
       layers.set(copyId, new LiveObject(copy));
       order.push(copyId);
@@ -389,7 +451,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
       const type = l.get("type");
       const update: Record<string, string | number> = {};
       const stroked = STROKED_TYPES.includes(type);
-      if (patch.color !== undefined && (type === "text" || type === "counter")) update.color = patch.color;
+      if (patch.color !== undefined && COLORED_TYPES.includes(type)) update.color = patch.color;
       if (patch.color !== undefined && stroked) update.stroke = patch.color;
       if (patch.fill !== undefined && (type === "rectangle" || type === "ellipse")) update.fill = patch.fill;
       if (patch.strokeWidth !== undefined && stroked) update.strokeWidth = patch.strokeWidth;
@@ -653,6 +715,63 @@ export function Canvas({ board }: { board: BoardInfo }) {
     for (const card of cards) pile.push(card as Card);
   }, []);
 
+  // ---- Board game kit ---------------------------------------------------
+
+  const layerTypeOf = useMutation(({ storage }, id: string) => storage.get("layers").get(id)?.get("type"), []);
+
+  /** Rolls the dice among `ids`. Returns what each one rolled. */
+  const rollDice = useMutation(({ storage }, ids: readonly string[]) => {
+    const values: number[] = [];
+    for (const id of ids) {
+      const l = storage.get("layers").get(id);
+      const layer = l?.toJSON();
+      if (layer?.type !== "die") continue;
+      const value = rollDie(layer.sides);
+      l!.update({ value, rolls: layer.rolls + 1 });
+      values.push(value);
+    }
+    return values;
+  }, []);
+
+  const tossCoins = useMutation(({ storage }, ids: readonly string[]) => {
+    for (const id of ids) {
+      const l = storage.get("layers").get(id);
+      const layer = l?.toJSON();
+      if (layer?.type === "coin") l!.update({ heads: Math.random() < 0.5, tosses: layer.tosses + 1 });
+    }
+  }, []);
+
+  /** Switches a die to the next kind (d4 → d6 → … → d20 → d4), keeping its value if it still fits. */
+  const nextDieSides = useMutation(({ storage }, id: string) => {
+    const l = storage.get("layers").get(id);
+    const layer = l?.toJSON();
+    if (layer?.type !== "die") return;
+    const sides = DIE_SIDES[(DIE_SIDES.indexOf(layer.sides) + 1) % DIE_SIDES.length];
+    l!.update({ sides, value: Math.min(layer.value, sides) });
+  }, []);
+
+  /** Switches a stopped timer to the next length (30 s → 1 min → 2 min → 5 min → 30 s). */
+  const nextTimerLength = useMutation(({ storage }, id: string) => {
+    const l = storage.get("layers").get(id);
+    const layer = l?.toJSON();
+    if (layer?.type !== "timer") return;
+    const index = TIMER_LENGTHS.indexOf(layer.seconds);
+    l!.update({ seconds: TIMER_LENGTHS[(index + 1) % TIMER_LENGTHS.length], endsAt: null });
+  }, []);
+
+  /** Starts a stopped timer, or stops and resets a running one. */
+  const toggleTimer = useMutation(({ storage }, id: string) => {
+    const l = storage.get("layers").get(id);
+    const layer = l?.toJSON();
+    if (layer?.type !== "timer") return;
+    l!.update({ endsAt: layer.endsAt === null ? Date.now() + layer.seconds * 1000 : null });
+  }, []);
+
+  const chipLabel = useMutation(({ storage }, id: string) => {
+    const l = storage.get("layers").get(id)?.toJSON();
+    return l?.type === "chip" ? l.label : null;
+  }, []);
+
   const playFromHand = useMutation(
     ({ storage, self, setMyPresence }, index: number, at: Point, faceDown: boolean) => {
       const hand = handCards(storage, self.id);
@@ -764,6 +883,21 @@ export function Canvas({ board }: { board: BoardInfo }) {
     svgRef.current?.setPointerCapture(e.pointerId);
   }
 
+  /**
+   * The selection after clicking a layer, which brings its whole group along. Shift adds or
+   * removes the group; a plain click keeps the selection if the layer is already in it, so
+   * the selection can be dragged, unless `replace` is set.
+   */
+  function clickSelection(id: string, shift: boolean, replace = false) {
+    const group = groupOf(id);
+    if (shift) {
+      return selection.includes(id)
+        ? selection.filter((s) => !group.includes(s))
+        : [...selection, ...group.filter((s) => !selection.includes(s))];
+    }
+    return selection.includes(id) && !replace ? selection : group;
+  }
+
   function setSelection(ids: string[]) {
     if (ids.length === 0 && selection.length === 0) return;
     updateMyPresence({ selection: ids }, { addToHistory: true });
@@ -771,8 +905,12 @@ export function Canvas({ board }: { board: BoardInfo }) {
 
   /** Zooms keeping the point under (screenX, screenY) still, whichever way the board is turned. */
   function zoomAt(screenX: number, screenY: number, factor: number) {
+    zoomTo(screenX, screenY, (zoom) => zoom * factor);
+  }
+
+  function zoomTo(screenX: number, screenY: number, next: (zoom: number) => number) {
     setCamera((c) => {
-      const zoom = clamp(c.zoom * factor, MIN_ZOOM, MAX_ZOOM);
+      const zoom = clamp(next(c.zoom), MIN_ZOOM, MAX_ZOOM);
       const k = zoom / c.zoom;
       return { ...c, zoom, x: screenX - (screenX - c.x) * k, y: screenY - (screenY - c.y) * k };
     });
@@ -867,12 +1005,52 @@ export function Canvas({ board }: { board: BoardInfo }) {
     changeCounter(id, (value) => value + delta * (e.shiftKey ? 5 : 1));
   }
 
-  /** F flips the card or pile under the cursor, or the selection if nothing is under it. */
+  /** F flips the card or pile (or tosses the coin) under the cursor, or the selection if nothing is under it. */
   function flipAtCursor() {
     const p = cursorRef.current;
-    const id = p ? layerAt(p, ["image", "pile"], []) : null;
-    if (id) flipLayers([id]);
-    else if (selection.length > 0) flipLayers(selection);
+    const id = p ? layerAt(p, ["image", "pile", "coin"], []) : null;
+    const ids = id ? [id] : selection;
+    flipLayers(ids);
+    tossCoins(ids);
+  }
+
+  /** Rolls the dice among `ids`, and adds them up when there's more than one. */
+  function roll(ids: readonly string[]) {
+    const values = rollDice(ids);
+    if (values.length > 1) {
+      const total = values.reduce((a, b) => a + b, 0);
+      setNotice(`Rolled ${values.length} dice: ${values.join(" + ")} = ${total}`);
+    }
+  }
+
+  function editChipLabel(id: string) {
+    const current = chipLabel(id);
+    if (current === null) return;
+    const label = window.prompt(`Chip label (up to ${MAX_CHIP_LABEL} characters, empty for none)`, current);
+    if (label !== null) updateLayer(id, { label: label.trim().slice(0, MAX_CHIP_LABEL) });
+  }
+
+  function onPieceDoubleClick(id: string) {
+    if (tool !== "select") return;
+    switch (layerTypeOf(id)) {
+      case "die":
+        roll([id]);
+        break;
+      case "coin":
+        tossCoins([id]);
+        break;
+      case "chip":
+        editChipLabel(id);
+        break;
+      case "timer":
+        toggleTimer(id);
+        break;
+    }
+  }
+
+  function addPiece(kind: PieceKind) {
+    insertLayer(nanoid(), newPiece(kind, viewportCenter()), true);
+    setTool("select");
   }
 
   function deleteSelection() {
@@ -1030,12 +1208,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
     e.stopPropagation();
     capture(e);
 
-    let next = selection;
-    if (e.shiftKey) {
-      next = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id];
-    } else if (!selection.includes(id)) {
-      next = [id];
-    }
+    const next = clickSelection(id, e.shiftKey);
     if (next !== selection) updateMyPresence({ selection: next }, { addToHistory: true });
 
     history.pause();
@@ -1099,7 +1272,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
       handle,
       bounds: selectionBounds,
       layers,
-      keepAspect: Object.values(layers).some((l) => l.type === "image" || l.type === "pile" || l.type === "counter"),
+      keepAspect: Object.values(layers).some((l) => KEEP_ASPECT_TYPES.includes(l.type)),
     };
   }
 
@@ -1192,11 +1365,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
         break;
       case "pilePress": {
         // A click without dragging selects the pile, which shows its actions.
-        let next = [g.pileId];
-        if (g.shift) {
-          next = selection.includes(g.pileId) ? selection.filter((s) => s !== g.pileId) : [...selection, g.pileId];
-        }
-        updateMyPresence({ selection: next }, { addToHistory: true });
+        updateMyPresence({ selection: clickSelection(g.pileId, g.shift, true) }, { addToHistory: true });
         history.resume();
         break;
       }
@@ -1245,6 +1414,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
     onCardRotate: (id: string) => {
       if (tool === "select") rotateCards([id]);
     },
+    onPieceDoubleClick,
     onLayerDoubleClick,
     onTextChange,
     onTextEditEnd,
@@ -1262,6 +1432,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
         handlersRef.current.onCounterStep(e, id, delta),
       onCounterEdit: (id: string) => handlersRef.current.onCounterEdit(id),
       onCardRotate: (id: string) => handlersRef.current.onCardRotate(id),
+      onPieceDoubleClick: (id: string) => handlersRef.current.onPieceDoubleClick(id),
       onLayerDoubleClick: (id: string) => handlersRef.current.onLayerDoubleClick(id),
       onTextChange: (id: string, text: string, height: number) => handlersRef.current.onTextChange(id, text, height),
       onTextEditEnd: (id: string) => handlersRef.current.onTextEditEnd(id),
@@ -1280,8 +1451,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
       const dx = e.deltaX * scale;
       const dy = e.deltaY * scale;
       if (e.ctrlKey || e.metaKey) {
+        if (dy === 0) return;
+        // Each scroll step moves the zoom by one percentage point, landing on whole percentages.
         const rect = svg!.getBoundingClientRect();
-        zoomAt(e.clientX - rect.left, e.clientY - rect.top, Math.exp(-dy * 0.01));
+        zoomTo(e.clientX - rect.left, e.clientY - rect.top, (zoom) => Math.round(zoom * 100 - Math.sign(dy)) / 100);
       } else if (e.shiftKey) {
         setCamera((c) => ({ ...c, x: c.x - dy }));
       } else {
@@ -1298,6 +1471,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
     flipAtCursor,
     selectAll,
     duplicateSelection,
+    groupSelection,
+    ungroupSelection,
     history,
     setSelection,
     addImages,
@@ -1310,6 +1485,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
     flipAtCursor,
     selectAll,
     duplicateSelection,
+    groupSelection,
+    ungroupSelection,
     history,
     setSelection,
     addImages,
@@ -1340,6 +1517,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
       } else if (mod && key === "d") {
         e.preventDefault();
         h.duplicateSelection();
+      } else if (mod && key === "g") {
+        e.preventDefault();
+        if (e.shiftKey) h.ungroupSelection();
+        else h.groupSelection();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (h.selection.length > 0) {
           e.preventDefault();
@@ -1386,7 +1567,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
   let controls: StyleControls;
   if (selectedTypes.length > 0) {
     controls = {
-      color: selectedTypes.some((t) => t === "text" || t === "counter" || STROKED_TYPES.includes(t)),
+      color: selectedTypes.some((t) => COLORED_TYPES.includes(t) || STROKED_TYPES.includes(t)),
       fill: selectedTypes.some((t) => t === "rectangle" || t === "ellipse"),
       strokeWidth: selectedTypes.some((t) => STROKED_TYPES.includes(t)),
       fontSize: selectedTypes.includes("text"),
@@ -1431,6 +1612,43 @@ export function Canvas({ board }: { board: BoardInfo }) {
         onClick: () => editCounter(oneCounter),
       },
       { label: "Rename", icon: "rename", onClick: () => renameLayer(oneCounter) },
+    );
+  }
+  if (selectedTypes.includes("die")) {
+    const several = selectedTypes.filter((t) => t === "die").length > 1;
+    contextActions.push({
+      label: several ? "Roll all" : "Roll",
+      icon: "die",
+      title: several ? "Roll the selected dice and add them up" : "Roll (or double-click the die)",
+      onClick: () => roll(selection),
+    });
+  }
+  if (pieceSettings && pieceSettings.sides > 0) {
+    contextActions.push({
+      label: `d${pieceSettings.sides}`,
+      icon: "die",
+      title: "Change the number of sides (d4, d6, d8, d10, d12, d20)",
+      onClick: () => nextDieSides(selection[0]),
+    });
+  }
+  if (selectedTypes.includes("coin")) {
+    contextActions.push({ label: "Toss", icon: "coin", title: "Toss (F, or double-click the coin)", onClick: () => tossCoins(selection) });
+  }
+  if (selection.length === 1 && selectedTypes[0] === "chip") {
+    contextActions.push({ label: "Label…", icon: "rename", title: "Change the label (or double-click the chip)", onClick: () => editChipLabel(selection[0]) });
+  }
+  if (pieceSettings && pieceSettings.seconds > 0) {
+    const timerId = selection[0];
+    contextActions.push(
+      pieceSettings.running
+        ? { label: "Reset", icon: "rotate", title: "Stop and reset (or double-click the timer)", onClick: () => toggleTimer(timerId) }
+        : { label: "Start", icon: "play", title: "Start (or double-click the timer)", onClick: () => toggleTimer(timerId) },
+      {
+        label: formatLength(pieceSettings.seconds),
+        icon: "timer",
+        title: "Change the length (30 s, 1 min, 2 min, 5 min). Resets the timer.",
+        onClick: () => nextTimerLength(timerId),
+      },
     );
   }
   if (selectedTypes.includes("image")) {
@@ -1529,6 +1747,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
         onLoadClick={() => loadInputRef.current?.click()}
         onNewPileClick={() => createPile(viewportCenter())}
         onNewCounterClick={() => addCounter(viewportCenter())}
+        onAddPiece={addPiece}
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={history.undo}
@@ -1546,6 +1765,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
                 onSendToBack: sendToBack,
                 onDuplicate: duplicateSelection,
                 onDelete: deleteSelection,
+                onGroup: canGroup ? groupSelection : undefined,
+                onUngroup: canUngroup ? ungroupSelection : undefined,
               }
             : undefined
         }
