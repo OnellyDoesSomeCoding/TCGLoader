@@ -56,6 +56,15 @@ body {
   color: var(--foreground);
 }
 
+/* iPhones zoom into a text field under 16px when it gets focus. Outside any layer, so it beats text-sm. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="range"]),
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
 /* Same dot grid as the board canvas. */
 @utility bg-dots {
   background-image: radial-gradient(#d4d4d8 1px, transparent 1px);

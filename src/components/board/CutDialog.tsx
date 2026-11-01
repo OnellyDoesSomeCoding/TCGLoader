@@ -124,7 +124,7 @@ export function CutDialog({
         role="dialog"
         aria-modal
         aria-labelledby="cut-title"
-        className="flex max-h-full w-full max-w-[600px] flex-col gap-4 overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+        className="flex max-h-full w-full max-w-[600px] flex-col gap-4 overflow-y-auto rounded-2xl bg-white p-4 shadow-xl sm:p-6"
       >
         <div className="flex items-center justify-between">
           <h2 id="cut-title" className="text-lg font-semibold">

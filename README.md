@@ -52,6 +52,24 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
 | Shift + drag from hand or pile | Play the card face down |
 | Esc | Deselect |
 
+### Phones and tablets
+
+The board works with touch. On phones the toolbar is shorter (text and shapes share one button), and held upright it sits at the bottom under your hand.
+
+| Gesture | Action |
+| --- | --- |
+| Two fingers | Pinch to zoom, drag to pan (also stops a drawing or drag the first finger started) |
+| One finger on empty board | Pan; a tap deselects |
+| Press and hold empty board, then drag | Select with a box |
+| Double-tap | Same as double-click: roll a die, edit text, rename a pile, turn a card |
+| **Select more** (with something selected) | Tap layers to add them to the selection or take them out; drag to move them all |
+| **Face down** (on your hand) | Cards you play from your hand or drag off a pile land face down, like Shift + drag |
+| Press and hold a card in your hand | Bigger preview |
+| Swipe sideways along your hand | Scroll through it; drag a card up to play it |
+| Swipe the card in **Look through** | Next or previous card |
+
+Flip, Rotate, Group, Delete and the pile actions are all buttons on the bar that appears when something is selected.
+
 ## Setup
 
 ### 1. Create the services

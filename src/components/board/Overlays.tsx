@@ -3,6 +3,7 @@
 import { shallow, useOthersMapped, useStorage } from "@liveblocks/react/suspense";
 import { memo } from "react";
 import { smoothPath } from "./geometry";
+import { COARSE_QUERY, useMediaQuery } from "./touch";
 import type { Handle, XYWH } from "./types";
 
 const HANDLES: Handle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
@@ -36,6 +37,9 @@ export function SelectionBox({
   onHandlePointerDown: (e: React.PointerEvent, handle: Handle) => void;
 }) {
   const size = 9 / zoom;
+  // Fingers get a bigger, invisible target around each handle.
+  const coarse = useMediaQuery(COARSE_QUERY);
+  const hitSize = 32 / zoom;
   return (
     <g>
       <rect
@@ -52,19 +56,21 @@ export function SelectionBox({
         HANDLES.map((h) => {
           const p = handlePosition(bounds, h);
           return (
-            <rect
-              key={h}
-              x={p.x - size / 2}
-              y={p.y - size / 2}
-              width={size}
-              height={size}
-              rx={2 / zoom}
-              fill="white"
-              stroke="#4f46e5"
-              strokeWidth={1.5 / zoom}
-              style={{ cursor: HANDLE_CURSORS[h] }}
-              onPointerDown={(e) => onHandlePointerDown(e, h)}
-            />
+            <g key={h} style={{ cursor: HANDLE_CURSORS[h] }} onPointerDown={(e) => onHandlePointerDown(e, h)}>
+              {coarse && (
+                <rect x={p.x - hitSize / 2} y={p.y - hitSize / 2} width={hitSize} height={hitSize} fill="transparent" />
+              )}
+              <rect
+                x={p.x - size / 2}
+                y={p.y - size / 2}
+                width={size}
+                height={size}
+                rx={2 / zoom}
+                fill="white"
+                stroke="#4f46e5"
+                strokeWidth={1.5 / zoom}
+              />
+            </g>
           );
         })}
     </g>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PieceKind } from "./GamePieces";
 import { Icon, type IconName } from "./Icon";
 import type { Style, Tool } from "./types";
@@ -15,18 +15,22 @@ const TOOLS: { tool: Tool; icon: IconName; label: string; key: string }[] = [
   { tool: "line", icon: "line", label: "Line", key: "L" },
   { tool: "arrow", icon: "arrow", label: "Arrow", key: "A" },
 ];
+// On small screens, text and the shapes share one toolbar button.
+const SHAPE_TOOLS = TOOLS.slice(3);
 
 export function ToolButton({
   icon,
   label,
   active,
   disabled,
+  compact,
   onClick,
 }: {
   icon: IconName;
   label: string;
   active?: boolean;
   disabled?: boolean;
+  compact?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -37,7 +41,7 @@ export function ToolButton({
       aria-pressed={active}
       disabled={disabled}
       onClick={onClick}
-      className={`grid size-10 place-items-center rounded-lg transition ${
+      className={`grid shrink-0 place-items-center rounded-lg transition ${compact ? "size-9" : "size-10"} ${
         active ? "bg-brand text-white" : "text-zinc-700 hover:bg-zinc-100"
       } disabled:pointer-events-none disabled:opacity-35`}
     >
@@ -46,7 +50,13 @@ export function ToolButton({
   );
 }
 
+/**
+ * The tools. A column on the left, or with `row` a row for the bottom of a phone screen.
+ * `compact` keeps it short: smaller buttons, and text and shapes in one menu.
+ */
 export function Toolbar({
+  compact,
+  row,
   tool,
   onToolChange,
   onUploadClick,
@@ -60,6 +70,8 @@ export function Toolbar({
   onUndo,
   onRedo,
 }: {
+  compact: boolean;
+  row: boolean;
   tool: Tool;
   onToolChange: (tool: Tool) => void;
   onUploadClick: () => void;
@@ -73,45 +85,96 @@ export function Toolbar({
   onUndo: () => void;
   onRedo: () => void;
 }) {
-  return (
-    <div className="absolute left-3 top-1/2 flex -translate-y-1/2 flex-col gap-2">
-      <div className="flex flex-col gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-md">
-        {TOOLS.map((t) => (
-          <ToolButton
-            key={t.tool}
-            icon={t.icon}
-            label={`${t.label} (${t.key})`}
-            active={tool === t.tool}
-            onClick={() => onToolChange(t.tool)}
-          />
-        ))}
-        <div className="mx-2 my-0.5 border-t border-zinc-200" />
-        <MenuButton
-          icon="cards"
-          label="Cards"
-          items={[
-            { icon: "image", label: "Upload image", onClick: onUploadClick },
-            { icon: "sheet", label: "Upload card sheet and cut it", onClick: onSheetUploadClick },
-            { icon: "load", label: "Load images into a pile", onClick: onLoadClick },
-            { icon: "pile", label: "New pile", onClick: onNewPileClick },
-            { icon: "counter", label: "New counter", onClick: onNewCounterClick },
-          ]}
+  const menuSide = row ? "top" : "right";
+  const shape = SHAPE_TOOLS.find((t) => t.tool === tool);
+  const groupClass = `flex rounded-xl border border-zinc-200 bg-white p-1 shadow-md ${row ? "gap-0.5" : "flex-col gap-1"}`;
+  const divider = <div className={`shrink-0 bg-zinc-200 ${row ? "mx-0.5 my-2 w-px" : "mx-2 my-0.5 h-px"}`} />;
+
+  const tools = (
+    <>
+      {(compact ? TOOLS.slice(0, 3) : TOOLS).map((t) => (
+        <ToolButton
+          key={t.tool}
+          icon={t.icon}
+          label={`${t.label} (${t.key})`}
+          active={tool === t.tool}
+          compact={compact}
+          onClick={() => onToolChange(t.tool)}
         />
+      ))}
+      {compact && (
         <MenuButton
-          icon="die"
-          label="Board game kit"
-          items={[
-            { icon: "die", label: "Die (d4 to d20)", onClick: () => onAddPiece("die") },
-            { icon: "coin", label: "Coin", onClick: () => onAddPiece("coin") },
-            { icon: "pawn", label: "Pawn", onClick: () => onAddPiece("pawn") },
-            { icon: "chip", label: "Marker chip", onClick: () => onAddPiece("chip") },
-            { icon: "timer", label: "Sand timer", onClick: () => onAddPiece("timer") },
-          ]}
+          icon={shape?.icon ?? "rectangle"}
+          label="Text and shapes"
+          active={shape !== undefined}
+          compact
+          side={menuSide}
+          items={SHAPE_TOOLS.map((t) => ({ icon: t.icon, label: t.label, onClick: () => onToolChange(t.tool) }))}
         />
+      )}
+    </>
+  );
+  const undoRedo = (
+    <>
+      <ToolButton icon="undo" label="Undo (Ctrl+Z)" disabled={!canUndo} compact={compact} onClick={onUndo} />
+      <ToolButton icon="redo" label="Redo (Ctrl+Shift+Z)" disabled={!canRedo} compact={compact} onClick={onRedo} />
+    </>
+  );
+
+  const menus = (
+    <>
+      <MenuButton
+        icon="cards"
+        label="Cards"
+        compact={compact}
+        side={menuSide}
+        items={[
+          { icon: "image", label: "Upload image", onClick: onUploadClick },
+          { icon: "sheet", label: "Upload card sheet and cut it", onClick: onSheetUploadClick },
+          { icon: "load", label: "Load images into a pile", onClick: onLoadClick },
+          { icon: "pile", label: "New pile", onClick: onNewPileClick },
+          { icon: "counter", label: "New counter", onClick: onNewCounterClick },
+        ]}
+      />
+      <MenuButton
+        icon="die"
+        label="Board game kit"
+        compact={compact}
+        side={menuSide}
+        items={[
+          { icon: "die", label: "Die (d4 to d20)", onClick: () => onAddPiece("die") },
+          { icon: "coin", label: "Coin", onClick: () => onAddPiece("coin") },
+          { icon: "pawn", label: "Pawn", onClick: () => onAddPiece("pawn") },
+          { icon: "chip", label: "Marker chip", onClick: () => onAddPiece("chip") },
+          { icon: "timer", label: "Sand timer", onClick: () => onAddPiece("timer") },
+        ]}
+      />
+    </>
+  );
+
+  if (row) {
+    // One bar, so it fits across a phone. Wraps on the narrowest screens.
+    return (
+      <div className={`pointer-events-auto max-w-full flex-wrap justify-center ${groupClass}`}>
+        {tools}
+        {divider}
+        {menus}
+        {divider}
+        {undoRedo}
       </div>
-      <div className="flex flex-col gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-md">
-        <ToolButton icon="undo" label="Undo (Ctrl+Z)" disabled={!canUndo} onClick={onUndo} />
-        <ToolButton icon="redo" label="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={onRedo} />
+    );
+  }
+
+  return (
+    // Leaves room for the header, and scrolls when the window is too short for it.
+    <div className="pointer-events-none absolute bottom-3 left-3 top-16 flex flex-col justify-center">
+      <div className="pointer-events-auto -m-2 flex max-h-full flex-col gap-2 overflow-y-auto p-2">
+        <div className={groupClass}>
+          {tools}
+          {divider}
+          {menus}
+        </div>
+        <div className={groupClass}>{undoRedo}</div>
       </div>
     </div>
   );
@@ -119,10 +182,47 @@ export function Toolbar({
 
 type MenuItem = { icon: IconName; label: string; onClick: () => void };
 
-/** One toolbar button that opens a menu of tools beside the toolbar. */
-function MenuButton({ icon, label, items }: { icon: IconName; label: string; items: MenuItem[] }) {
+const MENU_GAP = 12;
+
+/**
+ * One toolbar button that opens a menu of tools beside the toolbar (`side` "right") or above it
+ * ("top"). The menu is fixed to the window so a scrolling toolbar doesn't cut it off.
+ */
+function MenuButton({
+  icon,
+  label,
+  items,
+  active,
+  compact,
+  side,
+}: {
+  icon: IconName;
+  label: string;
+  items: MenuItem[];
+  active?: boolean;
+  compact?: boolean;
+  side: "right" | "top";
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Places the menu next to its button, inside the window, before it's painted.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const button = buttonRef.current?.getBoundingClientRect();
+    if (!open || !menu || !button) return;
+    const { width, height } = menu.getBoundingClientRect();
+    const fit = (v: number, size: number, room: number) => Math.max(MENU_GAP, Math.min(v, room - size - MENU_GAP));
+    if (side === "right") {
+      menu.style.left = `${button.right + MENU_GAP}px`;
+      menu.style.top = `${fit(button.top, height, window.innerHeight)}px`;
+    } else {
+      menu.style.left = `${fit(button.left, width, window.innerWidth)}px`;
+      menu.style.top = `${button.top - height - 8}px`;
+    }
+  }, [open, side]);
 
   useEffect(() => {
     if (!open) return;
@@ -141,16 +241,17 @@ function MenuButton({ icon, label, items }: { icon: IconName; label: string; ite
   }, [open]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative shrink-0">
       <button
+        ref={buttonRef}
         type="button"
         title={label}
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className={`relative grid size-10 place-items-center rounded-lg transition ${
-          open ? "bg-brand text-white" : "text-zinc-700 hover:bg-zinc-100"
+        className={`relative grid place-items-center rounded-lg transition ${compact ? "size-9" : "size-10"} ${
+          open || active ? "bg-brand text-white" : "text-zinc-700 hover:bg-zinc-100"
         }`}
       >
         <Icon name={icon} />
@@ -161,8 +262,9 @@ function MenuButton({ icon, label, items }: { icon: IconName; label: string; ite
       </button>
       {open && (
         <div
+          ref={menuRef}
           role="menu"
-          className="absolute left-full top-0 ml-3 flex w-64 flex-col gap-0.5 rounded-xl border border-zinc-200 bg-white p-1 shadow-md"
+          className="fixed left-0 top-0 z-30 flex w-64 max-w-[calc(100vw-1.5rem)] flex-col gap-0.5 rounded-xl border border-zinc-200 bg-white p-1 shadow-md"
         >
           {items.map((item) => (
             <button
@@ -173,7 +275,7 @@ function MenuButton({ icon, label, items }: { icon: IconName; label: string; ite
                 setOpen(false);
                 item.onClick();
               }}
-              className="flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+              className="flex h-9 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm text-zinc-700 hover:bg-zinc-100 pointer-coarse:h-11"
             >
               <Icon name={item.icon} className="size-[18px] shrink-0" />
               {item.label}
@@ -208,15 +310,21 @@ export type ContextAction = { label: string; icon: IconName; onClick: () => void
 export type StyleControls = { color: boolean; fill: boolean; strokeWidth: boolean; fontSize: boolean };
 
 export function StyleBar({
+  narrow,
   style,
   controls,
   onChange,
+  multiSelect,
   selectionActions,
   contextActions = [],
 }: {
+  // Phones held upright: the full width under the header instead of centered at the top.
+  narrow: boolean;
   style: Style;
   controls: StyleControls;
   onChange: (patch: Partial<Style>) => void;
+  // A touch stand-in for Shift + click, shown with the selection actions.
+  multiSelect?: { on: boolean; onToggle: () => void };
   selectionActions?: {
     onBringToFront: () => void;
     onSendToBack: () => void;
@@ -233,7 +341,11 @@ export function StyleBar({
   if (!hasStyle && !selectionActions) return null;
 
   return (
-    <div className="absolute left-1/2 top-3 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 overflow-x-auto rounded-xl border border-zinc-200 bg-white px-3 py-1.5 shadow-md">
+    <div
+      className={`absolute flex items-center gap-3 overflow-x-auto overscroll-x-contain rounded-xl border border-zinc-200 bg-white px-3 py-1.5 shadow-md touch-pan-x ${
+        narrow ? "inset-x-3 top-15" : "left-1/2 top-3 max-w-[calc(100vw-2rem)] -translate-x-1/2"
+      }`}
+    >
       {controls.color && (
         <Swatches label="Color" values={COLORS} value={style.color} onPick={(color) => onChange({ color })} />
       )}
@@ -283,6 +395,23 @@ export function StyleBar({
         <>
           {hasStyle && <Divider />}
           <div className="flex items-center gap-0.5">
+            {multiSelect && (
+              <>
+                <button
+                  type="button"
+                  aria-pressed={multiSelect.on}
+                  title="Tap layers to add them to the selection or take them out"
+                  onClick={multiSelect.onToggle}
+                  className={`flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium ${
+                    multiSelect.on ? "bg-brand text-white" : "text-zinc-700 hover:bg-zinc-100"
+                  }`}
+                >
+                  <Icon name="select" className="size-4" />
+                  Select more
+                </button>
+                <div className="mx-1 h-6 w-px shrink-0 bg-zinc-200" />
+              </>
+            )}
             {contextActions.map((a) => (
               <button
                 key={a.label}
@@ -361,7 +490,7 @@ function Swatches({
           type="button"
           title={c === "transparent" ? "No fill" : c}
           onClick={() => onPick(c)}
-          className={`size-6 rounded-full border ${value === c ? "ring-2 ring-brand ring-offset-1" : ""} ${
+          className={`size-6 shrink-0 rounded-full border pointer-coarse:size-7 ${value === c ? "ring-2 ring-brand ring-offset-1" : ""} ${
             c === "transparent"
               ? "border-zinc-300 bg-[linear-gradient(135deg,transparent_45%,#e03131_45%,#e03131_55%,transparent_55%)]"
               : "border-black/10"

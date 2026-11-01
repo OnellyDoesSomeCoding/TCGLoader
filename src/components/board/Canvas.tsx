@@ -51,6 +51,15 @@ import { Cursors, DraftPath, OthersDrafts, OthersSelections, SelectionBox } from
 import { PileBrowser } from "./PileBrowser";
 import { ShareDialog, type BoardInfo } from "./ShareDialog";
 import { StyleBar, Toolbar, type ContextAction, type StyleControls } from "./Toolbar";
+import {
+  COARSE_QUERY,
+  COMPACT_QUERY,
+  LONG_PRESS_MS,
+  NARROW_QUERY,
+  TAP_SLOP,
+  useDoubleTap,
+  useMediaQuery,
+} from "./touch";
 import { FULL_CROP } from "./types";
 import type {
   Camera,
@@ -99,10 +108,20 @@ const TOOL_SHORTCUTS: Record<string, Tool> = {
 type Gesture =
   | { mode: "idle" }
   | { mode: "panning"; startX: number; startY: number; startCamera: Camera }
-  | { mode: "pressing"; origin: Point; additive: readonly string[] }
+  // `touch`: where a finger went down. A finger on empty board pans instead of drawing a selection box.
+  | { mode: "pressing"; origin: Point; additive: readonly string[]; touch: { x: number; y: number } | null }
   | { mode: "marquee"; origin: Point; additive: readonly string[] }
   // `drops`: what the selection can be dropped onto; see selectionDrops.
-  | { mode: "translating"; last: Point; drops: { cards: boolean; piles: boolean }; drop: DropTarget | null }
+  // `deselectOnTap`: with "Select more" on, a tap on a selected layer deselects it, a drag moves the selection.
+  | {
+      mode: "translating";
+      last: Point;
+      drops: { cards: boolean; piles: boolean };
+      drop: DropTarget | null;
+      deselectOnTap?: { id: string; origin: Point };
+    }
+  // Two fingers on the board zoom and pan around the point between them, until every finger is lifted.
+  | { mode: "pinching"; startMid: Point; startDistance: number; startCamera: Camera }
   // Pressed on a pile: a drag pulls its top card off, a click selects the pile.
   | { mode: "pilePress"; pileId: string; origin: Point; shift: boolean }
   | { mode: "resizing"; handle: Handle; bounds: XYWH; layers: Record<string, Layer>; keepAspect: boolean }
@@ -215,6 +234,7 @@ async function imageSize(file: File) {
 }
 
 export function Canvas({ board }: { board: BoardInfo }) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sheetInputRef = useRef<HTMLInputElement>(null);
@@ -223,6 +243,9 @@ export function Canvas({ board }: { board: BoardInfo }) {
   const gesture = useRef<Gesture>({ mode: "idle" });
   // Latest pointer position on the board, for "F flips the card under the cursor".
   const cursorRef = useRef<Point | null>(null);
+  // Fingers on the board, in client pixels, by pointer id.
+  const touches = useRef(new Map<number, { x: number; y: number }>());
+  const longPressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const [camera, setCamera] = useState<Camera>(() => initialCamera(board.id));
   const [tool, setTool] = useState<Tool>("select");
@@ -246,9 +269,19 @@ export function Canvas({ board }: { board: BoardInfo }) {
     y: number;
     faceDown: boolean;
   } | null>(null);
+  // Touch stand-ins for Shift: add to the selection, and play cards from your hand or piles face down.
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [playFaceDown, setPlayFaceDown] = useState(false);
+
+  const compact = useMediaQuery(COMPACT_QUERY);
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const coarse = useMediaQuery(COARSE_QUERY);
+  useDoubleTap(rootRef);
 
   const layerIds = useStorage((root) => root.layerIds);
   const selection = useSelf((me) => me.presence.selection);
+  // "Select more" ends once nothing is selected.
+  if (multiSelect && selection.length === 0) setMultiSelect(false);
   const myDraft = useSelf((me) => me.presence.pencilDraft);
   const updateMyPresence = useUpdateMyPresence();
   const history = useHistory();
@@ -1162,8 +1195,72 @@ export function Canvas({ board }: { board: BoardInfo }) {
 
   // ---- Pointer handling -------------------------------------------------
 
+  /**
+   * Runs before the board's and the layers' own handlers. Tracks fingers on the board: a second
+   * finger drops whatever the first was doing and starts a pinch instead.
+   */
+  function onCanvasPointerDownCapture(e: React.PointerEvent) {
+    if (e.pointerType !== "touch") return;
+    // Keeps the browser from following the touch with emulated mouse events, which would take
+    // focus away from a text box the touch just opened.
+    if (!(e.target instanceof HTMLTextAreaElement)) e.preventDefault();
+    touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.current.size < 2) return;
+    e.stopPropagation();
+    // A third finger carries on with the pinch the first two started.
+    if (touches.current.size > 2) return;
+    cancelGesture();
+    for (const id of touches.current.keys()) {
+      try {
+        svgRef.current?.setPointerCapture(id);
+      } catch {} // That finger was already lifted.
+    }
+    const [a, b] = [...touches.current.values()];
+    const rect = svgRef.current!.getBoundingClientRect();
+    gesture.current = {
+      mode: "pinching",
+      startMid: { x: (a.x + b.x) / 2 - rect.left, y: (a.y + b.y) / 2 - rect.top },
+      startDistance: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1),
+      startCamera: camera,
+    };
+  }
+
+  /** Drops what one finger was doing when a second one lands. Moves already made stay. */
+  function cancelGesture() {
+    clearTimeout(longPressTimer.current);
+    const g = gesture.current;
+    gesture.current = { mode: "idle" };
+    switch (g.mode) {
+      case "panning":
+        setPanning(false);
+        break;
+      case "marquee":
+        setMarquee(null);
+        break;
+      case "translating":
+        setDropTarget(null);
+        history.resume();
+        break;
+      case "resizing":
+      case "pilePress":
+        history.resume();
+        break;
+      case "inserting":
+        deleteLayers([g.id]);
+        history.resume();
+        break;
+      case "drawing":
+        updateMyPresence({ pencilDraft: null });
+        break;
+    }
+  }
+
   function onCanvasPointerDown(e: React.PointerEvent) {
-    if (editingId) return; // This click just ends text editing.
+    if (editingId) {
+      // This click just ends text editing. A tap on a phone doesn't take focus from the text box, so blur it here.
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      return;
+    }
 
     if (e.button === 1 || spaceHeld || tool === "hand") {
       e.preventDefault();
@@ -1178,10 +1275,31 @@ export function Canvas({ board }: { board: BoardInfo }) {
     capture(e);
 
     switch (tool) {
-      case "select":
-        if (!e.shiftKey) setSelection([]);
-        gesture.current = { mode: "pressing", origin: p, additive: e.shiftKey ? selection : [] };
+      case "select": {
+        const additive = e.shiftKey || multiSelect;
+        if (e.pointerType === "touch") {
+          // A finger pans the board, and a tap clears the selection when it's lifted. Holding
+          // the finger still first draws a selection box instead.
+          const pressing: Extract<Gesture, { mode: "pressing" }> = {
+            mode: "pressing",
+            origin: p,
+            additive: additive ? selection : [],
+            touch: { x: e.clientX, y: e.clientY },
+          };
+          gesture.current = pressing;
+          clearTimeout(longPressTimer.current);
+          longPressTimer.current = setTimeout(() => {
+            if (gesture.current !== pressing) return;
+            gesture.current = { mode: "marquee", origin: p, additive: pressing.additive };
+            setMarquee({ x: p.x, y: p.y, width: 0, height: 0 });
+            navigator.vibrate?.(10);
+          }, LONG_PRESS_MS);
+          break;
+        }
+        if (!additive) setSelection([]);
+        gesture.current = { mode: "pressing", origin: p, additive: additive ? selection : [], touch: null };
         break;
+      }
       case "pen":
         gesture.current = { mode: "drawing", points: [[p.x, p.y]] };
         updateMyPresence({ pencilDraft: [[p.x, p.y]], pencilColor: style.color, pencilWidth: style.strokeWidth });
@@ -1208,11 +1326,19 @@ export function Canvas({ board }: { board: BoardInfo }) {
     e.stopPropagation();
     capture(e);
 
-    const next = clickSelection(id, e.shiftKey);
+    const deselectOnTap = multiSelect && !e.shiftKey && selection.includes(id);
+    const next = deselectOnTap ? selection : clickSelection(id, e.shiftKey || multiSelect);
     if (next !== selection) updateMyPresence({ selection: next }, { addToHistory: true });
 
     history.pause();
-    gesture.current = { mode: "translating", last: toWorld(e), drops: selectionDrops(), drop: null };
+    const p = toWorld(e);
+    gesture.current = {
+      mode: "translating",
+      last: p,
+      drops: selectionDrops(),
+      drop: null,
+      deselectOnTap: deselectOnTap ? { id, origin: p } : undefined,
+    };
   }
 
   function onPileBodyPointerDown(e: React.PointerEvent, id: string) {
@@ -1229,16 +1355,23 @@ export function Canvas({ board }: { board: BoardInfo }) {
     e.preventDefault();
     const startX = e.clientX;
     const startY = e.clientY;
+    const touch = e.pointerType === "touch";
     let dragging = false;
     let drop: DropTarget | null = null;
 
     const move = (ev: PointerEvent) => {
-      if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
+      if (!dragging) {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (Math.hypot(dx, dy) < (touch ? TAP_SLOP : 4)) return;
+        // A finger moving sideways scrolls the hand; the browser cancels this drag when it does.
+        if (touch && Math.abs(dx) > Math.abs(dy)) return;
+      }
       dragging = true;
       const p = toWorld(ev);
       cursorRef.current = p;
       updateMyPresence({ cursor: p });
-      setHandDrag({ index, card, x: ev.clientX, y: ev.clientY, faceDown: ev.shiftKey });
+      setHandDrag({ index, card, x: ev.clientX, y: ev.clientY, faceDown: ev.shiftKey || playFaceDown });
       const next = isOverHand(ev.clientX, ev.clientY) ? null : dropTargetAt(ev.clientX, ev.clientY, p, []);
       if (!sameDrop(next, drop)) {
         drop = next;
@@ -1254,7 +1387,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
       // Released back over the hand (or cancelled): nothing happens.
       if (!dragging || ev.type === "pointercancel" || isOverHand(ev.clientX, ev.clientY)) return;
       if (drop?.kind === "pile") handToPile(index, drop.id);
-      else playFromHand(index, toWorld(ev), ev.shiftKey);
+      else playFromHand(index, toWorld(ev), ev.shiftKey || playFaceDown);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
@@ -1277,11 +1410,18 @@ export function Canvas({ board }: { board: BoardInfo }) {
   }
 
   function onPointerMove(e: React.PointerEvent) {
+    if (touches.current.has(e.pointerId)) touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const g = gesture.current;
+    if (g.mode === "pinching") {
+      // Once one finger is lifted, the other does nothing until it's lifted too.
+      if (touches.current.size >= 2) pinch(g);
+      return;
+    }
+
     const p = toWorld(e);
     cursorRef.current = p;
     updateMyPresence({ cursor: p });
 
-    const g = gesture.current;
     switch (g.mode) {
       case "panning":
         setCamera({
@@ -1291,7 +1431,13 @@ export function Canvas({ board }: { board: BoardInfo }) {
         });
         break;
       case "pressing":
-        if (Math.hypot(p.x - g.origin.x, p.y - g.origin.y) * camera.zoom > 4) {
+        if (g.touch) {
+          if (Math.hypot(e.clientX - g.touch.x, e.clientY - g.touch.y) > TAP_SLOP) {
+            clearTimeout(longPressTimer.current);
+            gesture.current = { mode: "panning", startX: g.touch.x, startY: g.touch.y, startCamera: camera };
+            setPanning(true);
+          }
+        } else if (Math.hypot(p.x - g.origin.x, p.y - g.origin.y) * camera.zoom > 4) {
           gesture.current = { mode: "marquee", origin: g.origin, additive: g.additive };
         }
         break;
@@ -1316,7 +1462,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
         break;
       case "pilePress":
         if (Math.hypot(p.x - g.origin.x, p.y - g.origin.y) * camera.zoom > 4) {
-          if (takeTopToBoard(g.pileId, p, g.shift)) {
+          if (takeTopToBoard(g.pileId, p, g.shift || playFaceDown)) {
             gesture.current = { mode: "translating", last: p, drops: { cards: true, piles: false }, drop: null };
           } else {
             // Empty pile: drag the pile itself.
@@ -1342,13 +1488,36 @@ export function Canvas({ board }: { board: BoardInfo }) {
     }
   }
 
-  function onPointerUp() {
+  /** Zooms and pans so the board point that was between the two fingers stays between them. */
+  function pinch(g: Extract<Gesture, { mode: "pinching" }>) {
+    const [a, b] = [...touches.current.values()];
+    const rect = svgRef.current!.getBoundingClientRect();
+    const mid = { x: (a.x + b.x) / 2 - rect.left, y: (a.y + b.y) / 2 - rect.top };
+    const start = g.startCamera;
+    const zoom = clamp((start.zoom * Math.hypot(a.x - b.x, a.y - b.y)) / g.startDistance, MIN_ZOOM, MAX_ZOOM);
+    const k = zoom / start.zoom;
+    setCamera({ ...start, zoom, x: mid.x - (g.startMid.x - start.x) * k, y: mid.y - (g.startMid.y - start.y) * k });
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    clearTimeout(longPressTimer.current);
+    touches.current.delete(e.pointerId);
     const g = gesture.current;
+    if (g.mode === "pinching") {
+      if (touches.current.size === 0) gesture.current = { mode: "idle" };
+      return;
+    }
     gesture.current = { mode: "idle" };
+    // A cancelled touch (the browser took it over) isn't a tap.
+    const lifted = e.type === "pointerup";
 
     switch (g.mode) {
       case "panning":
         setPanning(false);
+        break;
+      case "pressing":
+        // A tap on empty board. The mouse already cleared the selection when pressed.
+        if (g.touch && lifted && !multiSelect) setSelection([]);
         break;
       case "marquee":
         setMarquee(null);
@@ -1357,6 +1526,12 @@ export function Canvas({ board }: { board: BoardInfo }) {
         if (g.drop) {
           moveSelectionTo(g.drop);
           setDropTarget(null);
+        } else if (g.deselectOnTap && lifted) {
+          const { id, origin } = g.deselectOnTap;
+          const p = toWorld(e);
+          if (Math.hypot(p.x - origin.x, p.y - origin.y) * camera.zoom < TAP_SLOP) {
+            updateMyPresence({ selection: clickSelection(id, true) }, { addToHistory: true });
+          }
         }
         history.resume();
         break;
@@ -1365,7 +1540,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
         break;
       case "pilePress": {
         // A click without dragging selects the pile, which shows its actions.
-        updateMyPresence({ selection: clickSelection(g.pileId, g.shift, true) }, { addToHistory: true });
+        updateMyPresence({ selection: clickSelection(g.pileId, g.shift || multiSelect, true) }, { addToHistory: true });
         history.resume();
         break;
       }
@@ -1463,6 +1638,26 @@ export function Canvas({ board }: { board: BoardInfo }) {
     }
     svg.addEventListener("wheel", onWheel, { passive: false });
     return () => svg.removeEventListener("wheel", onWheel);
+  }, []);
+
+  useEffect(() => {
+    // A finger can be lifted where the board doesn't hear it, e.g. when the layer it pressed was removed.
+    function forgetTouch(e: PointerEvent) {
+      touches.current.delete(e.pointerId);
+      if (touches.current.size === 0 && gesture.current.mode === "pinching") gesture.current = { mode: "idle" };
+    }
+    // Safari zooms the whole page on a pinch unless its own gesture events are cancelled.
+    function preventPageZoom(e: Event) {
+      e.preventDefault();
+    }
+    window.addEventListener("pointerup", forgetTouch);
+    window.addEventListener("pointercancel", forgetTouch);
+    document.addEventListener("gesturestart", preventPageZoom);
+    return () => {
+      window.removeEventListener("pointerup", forgetTouch);
+      window.removeEventListener("pointercancel", forgetTouch);
+      document.removeEventListener("gesturestart", preventPageZoom);
+    };
   }, []);
 
   const keyHandlersRef = useRef({
@@ -1671,19 +1866,59 @@ export function Canvas({ board }: { board: BoardInfo }) {
 
   const gridSize = 24 * camera.zoom;
 
+  const toolbar = (
+    <Toolbar
+      compact={compact}
+      row={narrow}
+      tool={tool}
+      onToolChange={changeTool}
+      onUploadClick={() => fileInputRef.current?.click()}
+      onSheetUploadClick={() => sheetInputRef.current?.click()}
+      onLoadClick={() => loadInputRef.current?.click()}
+      onNewPileClick={() => createPile(viewportCenter())}
+      onNewCounterClick={() => addCounter(viewportCenter())}
+      onAddPiece={addPiece}
+      canUndo={canUndo}
+      canRedo={canRedo}
+      onUndo={history.undo}
+      onRedo={history.redo}
+    />
+  );
+
+  const handTray = (
+    <HandTray
+      trayRef={handTrayRef}
+      compact={compact}
+      docked={narrow}
+      highlighted={dropTarget?.kind === "hand"}
+      draggingIndex={handDrag?.index ?? null}
+      onCardPointerDown={onHandCardPointerDown}
+      flipped={camera.flipped}
+      onFlippedChange={changeSeat}
+      faceDown={playFaceDown}
+      onFaceDownChange={setPlayFaceDown}
+    />
+  );
+
   return (
     <div
-      className="relative h-dvh w-full touch-none select-none overflow-hidden bg-[#f7f7f8]"
+      ref={rootRef}
+      className="relative h-dvh w-full touch-none select-none overflow-hidden bg-[#f7f7f8] [-webkit-touch-callout:none]"
       style={{
         backgroundImage: "radial-gradient(#d4d4d8 1px, transparent 1px)",
         backgroundSize: `${gridSize}px ${gridSize}px`,
         backgroundPosition: `${camera.x}px ${camera.y}px`,
+      }}
+      // A long press on a phone opens the browser's menu otherwise.
+      onContextMenu={(e) => {
+        if (!isTypingTarget(e.target)) e.preventDefault();
       }}
     >
       <svg
         ref={svgRef}
         className="absolute inset-0 h-full w-full"
         style={{ cursor }}
+        onPointerDownCapture={onCanvasPointerDownCapture}
         onPointerDown={onCanvasPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1737,27 +1972,16 @@ export function Canvas({ board }: { board: BoardInfo }) {
         </g>
       </svg>
 
-      <BoardHeader name={board.name} onShare={() => setShareOpen(true)} />
+      <BoardHeader name={board.name} compact={compact} onShare={() => setShareOpen(true)} />
 
-      <Toolbar
-        tool={tool}
-        onToolChange={changeTool}
-        onUploadClick={() => fileInputRef.current?.click()}
-        onSheetUploadClick={() => sheetInputRef.current?.click()}
-        onLoadClick={() => loadInputRef.current?.click()}
-        onNewPileClick={() => createPile(viewportCenter())}
-        onNewCounterClick={() => addCounter(viewportCenter())}
-        onAddPiece={addPiece}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUndo={history.undo}
-        onRedo={history.redo}
-      />
+      {!narrow && toolbar}
 
       <StyleBar
+        narrow={narrow}
         style={shownStyle}
         controls={controls}
         onChange={applyStyle}
+        multiSelect={coarse ? { on: multiSelect, onToggle: () => setMultiSelect((on) => !on) } : undefined}
         selectionActions={
           selection.length > 0
             ? {
@@ -1773,7 +1997,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
         contextActions={contextActions}
       />
 
-      <div className="absolute bottom-3 right-3 flex items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-md">
+      {/* Phones zoom with two fingers instead. */}
+      <div
+        className={`absolute bottom-3 right-3 flex items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-md ${compact ? "hidden" : ""}`}
+      >
         <button
           type="button"
           title="Zoom out"
@@ -1800,14 +2027,15 @@ export function Canvas({ board }: { board: BoardInfo }) {
         </button>
       </div>
 
-      <HandTray
-        trayRef={handTrayRef}
-        highlighted={dropTarget?.kind === "hand"}
-        draggingIndex={handDrag?.index ?? null}
-        onCardPointerDown={onHandCardPointerDown}
-        flipped={camera.flipped}
-        onFlippedChange={changeSeat}
-      />
+      {narrow ? (
+        // Phones held upright: your hand sits on the toolbar at the bottom.
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 flex flex-col items-center gap-2">
+          {handTray}
+          {toolbar}
+        </div>
+      ) : (
+        handTray
+      )}
 
       {handDrag && (
         <div
@@ -1827,7 +2055,9 @@ export function Canvas({ board }: { board: BoardInfo }) {
       )}
 
       {(uploads > 0 || notice) && (
-        <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white shadow-lg">
+        <div
+          className={`absolute left-1/2 z-10 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white shadow-lg ${narrow ? "top-28" : "top-16"}`}
+        >
           {uploads > 0 ? `Uploading ${uploads} image${uploads > 1 ? "s" : ""}…` : notice}
         </div>
       )}

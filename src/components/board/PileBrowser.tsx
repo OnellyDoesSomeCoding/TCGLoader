@@ -10,6 +10,8 @@ const THUMB_HEIGHT = 96;
 // The preview is this tall, or under half the window on short screens, and never wider than PREVIEW_MAX_WIDTH.
 const PREVIEW_HEIGHT = 380;
 const PREVIEW_MAX_WIDTH = 480;
+// Swiping the preview at least this far moves to the next or previous card.
+const SWIPE_DISTANCE = 40;
 
 function previewSize(card: Card, maxHeight: number) {
   const scale = Math.min(maxHeight / card.height, PREVIEW_MAX_WIDTH / card.width);
@@ -35,6 +37,7 @@ export function PileBrowser({
   const [position, setPosition] = useState(0);
   const [previewHeight] = useState(() => Math.min(PREVIEW_HEIGHT, Math.round(window.innerHeight * 0.45)));
   const thumbRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const swipeStartX = useRef<number | null>(null);
 
   // Someone else deleted the pile while it was open.
   useEffect(() => {
@@ -55,6 +58,11 @@ export function PileBrowser({
   const card = count > 0 ? cards[index] : null;
   const size = card ? previewSize(card, previewHeight) : null;
 
+  /** Moves `step` cards down the pile (up when negative), stopping at either end. */
+  function moveBy(step: number) {
+    setPosition(Math.max(0, Math.min(current + step, count - 1)));
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4"
@@ -67,7 +75,7 @@ export function PileBrowser({
         if (e.target instanceof HTMLInputElement) return;
         if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
           e.preventDefault();
-          setPosition(Math.max(0, Math.min(current + (e.key === "ArrowLeft" ? -1 : 1), count - 1)));
+          moveBy(e.key === "ArrowLeft" ? -1 : 1);
         }
       }}
     >
@@ -75,7 +83,7 @@ export function PileBrowser({
         role="dialog"
         aria-modal
         aria-labelledby="browse-title"
-        className="flex max-h-full w-full max-w-4xl flex-col overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+        className="flex max-h-full w-full max-w-4xl flex-col overflow-y-auto rounded-2xl bg-white p-4 shadow-xl sm:p-6"
       >
         <div className="mb-1 flex items-center justify-between">
           <h2 id="browse-title" className="text-lg font-semibold">
@@ -94,10 +102,23 @@ export function PileBrowser({
           <p className="py-10 text-center text-sm text-zinc-500">This pile is empty.</p>
         ) : (
           <>
-            <div className="flex flex-col items-center gap-5 rounded-xl bg-zinc-50 p-5 sm:flex-row sm:justify-center sm:gap-10">
+            <div className="flex flex-col items-center gap-5 rounded-xl bg-zinc-50 p-3 sm:flex-row sm:justify-center sm:gap-10 sm:p-5">
+              {/* Swipe left for the next card down, right to go back up. */}
               <div
-                className="relative shrink-0 overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/10"
+                className="relative shrink-0 touch-pan-y overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/10"
                 style={{ width: size.width, height: size.height }}
+                onPointerDown={(e) => {
+                  swipeStartX.current = e.clientX;
+                }}
+                onPointerUp={(e) => {
+                  const start = swipeStartX.current;
+                  swipeStartX.current = null;
+                  if (start === null || Math.abs(e.clientX - start) < SWIPE_DISTANCE) return;
+                  moveBy(e.clientX < start ? 1 : -1);
+                }}
+                onPointerCancel={() => {
+                  swipeStartX.current = null;
+                }}
               >
                 <CardImage card={card} width={size.width} height={size.height} />
                 {current === 0 && (
@@ -137,7 +158,10 @@ export function PileBrowser({
                     To board
                   </button>
                 </div>
-                <p className="text-xs text-zinc-400">← → to move through the pile</p>
+                <p className="text-xs text-zinc-400">
+                  <span className="pointer-coarse:hidden">← → or swipe the card to move through the pile</span>
+                  <span className="hidden pointer-coarse:inline">Swipe the card to move through the pile</span>
+                </p>
               </div>
             </div>
 

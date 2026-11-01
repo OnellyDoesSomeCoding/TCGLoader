@@ -4,7 +4,8 @@ import { shallow, useOthersMapped, useSelf, useStorage } from "@liveblocks/react
 import Link from "next/link";
 import { Icon } from "./Icon";
 
-export function BoardHeader({ name, onShare }: { name: string; onShare: () => void }) {
+/** The board name and the way back, and who's here with the Share button. `compact` fits them on a phone. */
+export function BoardHeader({ name, compact, onShare }: { name: string; compact: boolean; onShare: () => void }) {
   return (
     <>
       <div className="absolute left-3 top-3 flex items-center gap-1 rounded-xl border border-zinc-200 bg-white py-1 pl-1 pr-3 shadow-md">
@@ -15,27 +16,28 @@ export function BoardHeader({ name, onShare }: { name: string; onShare: () => vo
         >
           <Icon name="back_arrow" />
         </Link>
-        <span className="max-w-[40vw] truncate text-sm font-semibold">{name}</span>
+        <span className={`truncate text-sm font-semibold ${compact ? "max-w-[30vw]" : "max-w-[40vw]"}`}>{name}</span>
       </div>
 
       <div className="absolute right-3 top-3 flex items-center gap-2 rounded-xl border border-zinc-200 bg-white p-1 pl-2 shadow-md">
-        <Avatars />
+        <Avatars max={compact ? 2 : 4} />
         <button
           type="button"
           onClick={onShare}
-          className="flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-strong"
+          aria-label="Share"
+          title="Share"
+          className={`flex items-center gap-1.5 rounded-lg bg-brand py-1.5 text-sm font-medium text-white hover:bg-brand-strong ${compact ? "px-2" : "px-3"}`}
         >
           <Icon name="share" className="size-4" />
-          Share
+          {!compact && "Share"}
         </button>
       </div>
     </>
   );
 }
 
-const MAX_AVATARS = 4;
-
-function Avatars() {
+/** Everyone on the board, you last. `max`: how many others to show before "+3". */
+function Avatars({ max }: { max: number }) {
   const me = useSelf((s) => ({ id: s.id, name: s.info.name, color: s.info.color }), shallow);
   const others = useOthersMapped((o) => ({ id: o.id, name: o.info.name, color: o.info.color }), shallow);
   // How many cards each person holds; everyone can see the counts, not the cards.
@@ -53,11 +55,11 @@ function Avatars() {
     seen.add(o.id);
     people.push(o);
   }
-  const extra = people.length - MAX_AVATARS;
+  const extra = people.length - max;
 
   return (
     <div className="flex -space-x-2">
-      {people.slice(0, MAX_AVATARS).map((p) => (
+      {people.slice(0, max).map((p) => (
         <Avatar key={p.id} name={p.name} color={p.color} cards={handSizes[p.id] ?? 0} />
       ))}
       {extra > 0 && (
