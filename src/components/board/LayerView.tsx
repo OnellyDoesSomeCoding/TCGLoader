@@ -7,11 +7,15 @@ import { isSideways } from "./cards";
 import { CounterView } from "./CounterView";
 import { ChipView, CoinView, DieView, PawnView, TimerView } from "./GamePieces";
 import { arrowHeadPath, smoothPath } from "./geometry";
-import type { Layer, LayerType } from "./types";
+import { PackView } from "./PackArt";
+import type { Layer, LayerType, Point } from "./types";
 
 // Turned back upright when the board is turned for Player 2, so they stay readable.
 // Drawings turn with the board so arrows and circles still point at the right things.
-const UPRIGHT_TYPES = new Set<LayerType>(["text", "image", "pile", "counter", "die", "coin", "pawn", "chip", "timer"]);
+const UPRIGHT_TYPES = new Set<LayerType>(["text", "image", "pile", "counter", "die", "coin", "pawn", "chip", "timer", "pack"]);
+
+/** A card that just came out of a pack: it flies out from `from`, the pack's center, after `delay` ms. */
+export type Pop = { from: Point; delay: number };
 
 type LayerViewProps = {
   id: string;
@@ -19,29 +23,44 @@ type LayerViewProps = {
   flipped: boolean;
   isEditing: boolean;
   isDropTarget: boolean;
+  pop?: Pop;
   onLayerPointerDown: (e: React.PointerEvent, id: string) => void;
   onPileBodyPointerDown: (e: React.PointerEvent, id: string) => void;
   onPileRename: (id: string) => void;
   onCounterStep: (e: React.PointerEvent, id: string, delta: number) => void;
   onCounterEdit: (id: string) => void;
   onCardRotate: (id: string) => void;
-  // Double-clicking a kit piece rolls a die, tosses a coin, labels a chip or starts a timer.
+  // Double-clicking a kit piece rolls a die, tosses a coin, labels a chip, starts a timer or opens a pack.
   onPieceDoubleClick: (id: string) => void;
   onLayerDoubleClick: (id: string) => void;
   onTextChange: (id: string, text: string, height: number) => void;
   onTextEditEnd: (id: string) => void;
 };
 
-export const LayerView = memo(function LayerView({ flipped, ...props }: LayerViewProps) {
+export const LayerView = memo(function LayerView({ flipped, pop, ...props }: LayerViewProps) {
   const layer = useStorage((root) => root.layers[props.id]);
   if (!layer) return null;
 
-  const content = <LayerContent layer={layer} {...props} />;
-  if (!flipped || !UPRIGHT_TYPES.has(layer.type)) return content;
-  // A half turn around its own center leaves the layer's footprint where it was.
   const cx = layer.x + layer.width / 2;
   const cy = layer.y + layer.height / 2;
-  return <g transform={`rotate(180 ${cx} ${cy})`}>{content}</g>;
+  let content = <LayerContent layer={layer} {...props} />;
+  // A half turn around its own center leaves the layer's footprint where it was.
+  if (flipped && UPRIGHT_TYPES.has(layer.type)) content = <g transform={`rotate(180 ${cx} ${cy})`}>{content}</g>;
+  if (!pop) return <g>{content}</g>;
+  // Outside the half turn, so the card flies the right way on a turned board too. The wrapping <g> is
+  // there either way, so the card isn't remounted when its animation ends.
+  const style = {
+    "--pop-x": `${pop.from.x - cx}px`,
+    "--pop-y": `${pop.from.y - cy}px`,
+    animationDelay: `${pop.delay}ms`,
+    transformBox: "fill-box",
+    transformOrigin: "center",
+  } as React.CSSProperties;
+  return (
+    <g className="animate-pack-pop" style={style}>
+      {content}
+    </g>
+  );
 });
 
 function LayerContent({
@@ -217,6 +236,18 @@ function LayerContent({
 
     case "timer":
       return <TimerView layer={layer} onPointerDown={common.onPointerDown} onDoubleClick={() => onPieceDoubleClick(id)} />;
+
+    case "pack":
+      return (
+        <PackView
+          id={id}
+          layer={layer}
+          zoom={zoom}
+          highlighted={isDropTarget}
+          onPointerDown={common.onPointerDown}
+          onDoubleClick={() => onPieceDoubleClick(id)}
+        />
+      );
   }
 }
 

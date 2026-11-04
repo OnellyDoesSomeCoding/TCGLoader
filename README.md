@@ -14,7 +14,7 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
   - Infinite canvas with pan and zoom.
   - Select by clicking or dragging a box; move, resize, duplicate, bring to front or send to back.
   - **Groups:** select several parts and click **Group** (Ctrl+G) to keep them together. Clicking any part of a group selects all of it, so it moves, resizes and duplicates as one. **Ungroup** (Ctrl+Shift+G) splits it again.
-  - The **Cards** button in the toolbar opens a menu with the card tools: upload an image, upload a card sheet, load images into a pile, new pile and new counter.
+  - The **Cards** button in the toolbar opens a menu with the card tools: upload an image, upload a card sheet, load images into a pile, new pile, new card pack and new counter.
   - Freehand pen, rectangle, ellipse, line, arrow and text boxes, with colors, fill, stroke width and font size.
   - Upload images by file picker, drag and drop, or paste.
   - **Cut a card sheet into cards:** upload an uncut sheet with **Cards → Upload card sheet**, or select any image and click **Cut into cards**. Set columns × rows (presets include 10 × 7 for Tabletop Simulator decks), plus an optional outer margin and gap between cards in pixels. Each card reuses the uploaded sheet with a crop, so cutting is instant and keeps full quality.
@@ -24,6 +24,13 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
   - **Player 1 / Player 2:** the switch on top of your hand turns the board 180° so you can sit on the other side of the table, with your side at the bottom. Cards, text, piles and counters stay upright; drawings and arrows turn with the board. Only your view changes, and this browser remembers your side for each board.
   - **Piles** (draw piles, discard piles): create one with **Cards → New pile**, or select cards and click **Make pile**. Drop cards onto a pile to put them on top. Drag the top card off to put it on the board (Shift + drag puts it face down). Drag the dark name tab to move the pile; double-click the tab to rename it.
   - **Pile actions** (select a pile): Draw, Draw several, Take top, Shuffle, Flip, Look through (only you see the cards; a large preview of one card, with a slider, a strip of small cards and the arrow keys to move through the pile), Rename, Duplicate (copies the cards too), Delete (deletes its cards too).
+  - **Card packs** (boosters): create one with **Cards → New card pack**. A pack is a little bigger than a pile, and taller.
+    - **Adding cards:** drop cards onto the pack from the board, your hand or a pile (a whole pile adds all its cards), or drop image files from your computer onto it. Each card starts with weight 1, and a pack takes each card only once.
+    - **Edit** (select the pack): name, cover, cards per pack (1 to 20), whether the same card can come up twice in one pack, and each card's **weight**. Bigger weights come up more often; 0 means never. The dialog shows each card's chance per pick, and everyone on the board can see it.
+    - **Guarantee:** tag cards as Guarantee in **Edit**, and every pack holds at least one of them.
+    - **Cover:** upload your own, or keep the default foil wrapper, which shows the pack's name and recolors with the color swatches.
+    - **Open** (or double-click): the pack tears open for everyone and its cards pop out face down in a ring around it. Flip them one by one with **F**. The pack is used up; **Undo** puts it back.
+    - **Make copies…** prints more of a pack with the same cards, in rows beside it. **Duplicate** (Ctrl+D) copies a pack's cards too.
   - **Flipping:** press **F** while hovering a card or pile. All face-down cards share one card-back pattern.
   - **Board game kit** (the die button under **Cards**): pieces that everyone sees and that recolor with the color swatches.
     - **Die:** double-click or click **Roll** to roll it; every player sees the same result and a tumble. The **d6** action switches between d4, d6, d8, d10, d12 and d20. Select several dice and click **Roll all** to see the total.
@@ -48,6 +55,7 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
 | Ctrl+A / Ctrl+D | Select all / Duplicate |
 | Ctrl+G / Ctrl+Shift+G | Group / Ungroup |
 | Double-click text | Edit text |
+| Double-click a pack | Open it |
 | F (while hovering) | Flip a card or pile, toss a coin |
 | Shift + drag from hand or pile | Play the card face down |
 | Esc | Deselect |
@@ -122,5 +130,5 @@ src/components/board/         Canvas, layers, toolbar, share dialog
 ### How board data is stored
 
 - **Postgres** stores users, boards and who has access.
-- **Liveblocks** stores each board's contents in a room called `board:<id>`. `layers` maps layer ids to shapes, and `layerIds` holds the paint order.
+- **Liveblocks** stores each board's contents in a room called `board:<id>`. `layers` maps layer ids to shapes, and `layerIds` holds the paint order. `piles`, `hands` and `packs` hold the cards in each pile, hand and pack. Opening a pack also sends a `packOpened` room event, so everyone sees the rip.
 - **Vercel Blob** stores uploaded images. Layers keep only the image URL.

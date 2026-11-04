@@ -141,6 +141,25 @@ export type TimerLayer = {
   color: string;
 };
 
+/**
+ * A sealed card pack. The cards it can give live in storage `packs[id]`; opening it picks
+ * `size` of them by weight, and the pack is used up.
+ */
+export type PackLayer = {
+  type: "pack";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  name: string;
+  size: number;
+  // Whether one pack can give the same card more than once.
+  allowDuplicates: boolean;
+  // An uploaded cover image. Missing means the default cover, which shows the name.
+  cover?: string;
+  color: string;
+};
+
 /** A card while it's off the board, in a pile or a hand. Width/height are its board size. */
 export type Card = {
   url: string;
@@ -148,6 +167,12 @@ export type Card = {
   height: number;
   crop?: Crop;
 };
+
+/**
+ * A card a pack can give. Bigger weights come up more often; 0 means never.
+ * Every pack holds at least one `guaranteed` card, if the pack has any.
+ */
+export type PackCard = Card & { weight: number; guaranteed?: boolean };
 
 /** Layers grouped together share a `groupId`, so they're selected and moved as one. */
 type Grouping = { groupId?: string };
@@ -164,12 +189,13 @@ export type Layer = (
   | PawnLayer
   | ChipLayer
   | TimerLayer
+  | PackLayer
 ) &
   Grouping;
 export type LayerType = Layer["type"];
 
 /** Where dragged cards will land when released. */
-export type DropTarget = { kind: "hand" } | { kind: "pile"; id: string };
+export type DropTarget = { kind: "hand" } | { kind: "pile" | "pack"; id: string };
 
 /** Read-only point list, as returned by Liveblocks' immutable storage snapshots. */
 export type Points = ReadonlyArray<ReadonlyArray<number>>;

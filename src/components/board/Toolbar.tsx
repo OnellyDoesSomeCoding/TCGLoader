@@ -63,6 +63,7 @@ export function Toolbar({
   onSheetUploadClick,
   onLoadClick,
   onNewPileClick,
+  onNewPackClick,
   onNewCounterClick,
   onAddPiece,
   canUndo,
@@ -78,6 +79,7 @@ export function Toolbar({
   onSheetUploadClick: () => void;
   onLoadClick: () => void;
   onNewPileClick: () => void;
+  onNewPackClick: () => void;
   onNewCounterClick: () => void;
   onAddPiece: (kind: PieceKind) => void;
   canUndo: boolean;
@@ -133,6 +135,7 @@ export function Toolbar({
           { icon: "sheet", label: "Upload card sheet and cut it", onClick: onSheetUploadClick },
           { icon: "load", label: "Load images into a pile", onClick: onLoadClick },
           { icon: "pile", label: "New pile", onClick: onNewPileClick },
+          { icon: "pack", label: "New card pack", onClick: onNewPackClick },
           { icon: "counter", label: "New counter", onClick: onNewCounterClick },
         ]}
       />

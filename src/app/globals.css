@@ -22,6 +22,32 @@
   /* Board game kit: a die tumbling and a coin spinning after a roll or toss. */
   --animate-die-roll: die-roll 0.5s ease-out;
   --animate-coin-toss: coin-toss 0.6s ease-out;
+  /* Card packs: the wrapper tearing open, and each card flying out of it to its spot. */
+  --animate-pack-rip-top: pack-rip-top 0.8s ease-in forwards;
+  --animate-pack-rip-body: pack-rip-body 0.8s ease-in forwards;
+  --animate-pack-pop: pack-pop 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+
+  @keyframes pack-rip-top {
+    0% { transform: none; opacity: 1; }
+    15% { transform: rotate(4deg); }
+    45% { transform: rotate(-28deg); opacity: 1; }
+    100% { transform: translate(60px, -120px) rotate(-60deg); opacity: 0; }
+  }
+
+  @keyframes pack-rip-body {
+    0% { transform: none; }
+    8% { transform: rotate(-3deg); }
+    16% { transform: rotate(3deg); }
+    24% { transform: rotate(-2deg); }
+    40% { transform: scale(1.04); opacity: 1; }
+    100% { transform: translateY(30px) scale(0.8); opacity: 0; }
+  }
+
+  /* --pop-x and --pop-y: set on each card, the offset from its center back to the pack's. */
+  @keyframes pack-pop {
+    from { transform: translate(var(--pop-x), var(--pop-y)) scale(0.2) rotate(-25deg); opacity: 0; }
+    to { transform: none; opacity: 1; }
+  }
 
   @keyframes die-roll {
     0% { transform: rotate(0) scale(1); }

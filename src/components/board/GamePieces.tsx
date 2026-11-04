@@ -55,7 +55,7 @@ function formatClock(seconds: number) {
 }
 
 /** Black or white, whichever reads better on a #rrggbb color. */
-function inkOn(color: string) {
+export function inkOn(color: string) {
   const n = parseInt(color.slice(1), 16);
   if (color.length !== 7 || Number.isNaN(n)) return "#ffffff";
   const luma = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);

@@ -3,9 +3,11 @@
 import { LiveObject } from "@liveblocks/client";
 import {
   shallow,
+  useBroadcastEvent,
   useCanRedo,
   useCanUndo,
   useErrorListener,
+  useEventListener,
   useHistory,
   useMutation,
   useSelf,
@@ -45,9 +47,12 @@ import {
 } from "./geometry";
 import { HandTray } from "./HandTray";
 import { Icon } from "./Icon";
-import { LayerView } from "./LayerView";
+import { LayerView, type Pop } from "./LayerView";
 import { LoadDialog, type LoadOptions } from "./LoadDialog";
 import { Cursors, DraftPath, OthersDrafts, OthersSelections, SelectionBox } from "./Overlays";
+import { PackRip } from "./PackArt";
+import { PackEditor } from "./PackEditor";
+import { MAX_PACK_COPIES, addToPack, newPack, packCards, ringAround, rollPack } from "./packs";
 import { PileBrowser } from "./PileBrowser";
 import { ShareDialog, type BoardInfo } from "./ShareDialog";
 import { StyleBar, Toolbar, type ContextAction, type StyleControls } from "./Toolbar";
@@ -69,6 +74,8 @@ import type {
   InsertTool,
   Layer,
   LayerType,
+  PackCard,
+  PackLayer,
   Point,
   Style,
   Tool,
@@ -84,13 +91,21 @@ const MAX_SHEET_SIDE = 1200;
 const CARD_SPACING = 16;
 const COUNTER_COLOR = "#1971c2";
 const MAX_COUNTER = 99999;
+// Copies of a pack go in rows of this many to its right, this far apart.
+const PACK_COPIES_PER_ROW = 10;
+const PACK_GAP = 24;
+// Opening a pack: the rip plays, and partway through each card flies out, one after another.
+const RIP_MS = 800;
+const POP_DELAY_MS = 250;
+const POP_STAGGER_MS = 45;
+const POP_MS = 550;
 
 // Layers that have a stroke color and width.
 const STROKED_TYPES: LayerType[] = ["rectangle", "ellipse", "path", "line", "arrow"];
 // Layers with a single `color`.
-const COLORED_TYPES: LayerType[] = ["text", "counter", "die", "coin", "pawn", "chip", "timer"];
+const COLORED_TYPES: LayerType[] = ["text", "counter", "die", "coin", "pawn", "chip", "timer", "pack"];
 // Layers that keep their shape when resized.
-const KEEP_ASPECT_TYPES: LayerType[] = ["image", "pile", "counter", "die", "coin", "pawn", "chip", "timer"];
+const KEEP_ASPECT_TYPES: LayerType[] = ["image", "pile", "counter", "die", "coin", "pawn", "chip", "timer", "pack"];
 
 const TOOL_SHORTCUTS: Record<string, Tool> = {
   v: "select",
@@ -154,7 +169,8 @@ function withGroups(layers: Liveblocks["Storage"]["layers"], order: readonly str
 
 function sameDrop(a: DropTarget | null, b: DropTarget | null) {
   if (a === null || b === null) return a === b;
-  return a.kind === b.kind && (a.kind === "hand" || (b.kind === "pile" && a.id === b.id));
+  if (a.kind === "hand" || b.kind === "hand") return a.kind === b.kind;
+  return a.kind === b.kind && a.id === b.id;
 }
 
 /** True when canvas shortcuts should stay out of the way: typing, or a dialog is open. */
@@ -261,6 +277,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
   // Images picked for "Load", waiting in the load dialog.
   const [loadFiles, setLoadFiles] = useState<File[] | null>(null);
   const [browsePileId, setBrowsePileId] = useState<string | null>(null);
+  const [editPackId, setEditPackId] = useState<string | null>(null);
+  // Packs being torn open right now, and the cards flying out of them, by card layer id.
+  const [rips, setRips] = useState<{ key: string; pack: PackLayer }[]>([]);
+  const [pops, setPops] = useState<ReadonlyMap<string, Pop>>(() => new Map());
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [handDrag, setHandDrag] = useState<{
     index: number;
@@ -287,9 +307,14 @@ export function Canvas({ board }: { board: BoardInfo }) {
   const history = useHistory();
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
+  const broadcast = useBroadcastEvent();
 
   useErrorListener((error) => {
     setNotice(`Connection problem: ${error.message}`);
+  });
+
+  useEventListener(({ event }) => {
+    if (event.type === "packOpened") showPackOpened(event.pack, event.cardIds);
   });
 
   useEffect(() => {
@@ -473,6 +498,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
         const cards = pileCards(storage, copyId);
         for (const card of storage.get("piles")?.get(id)?.toJSON() ?? []) cards.push(card as Card);
       }
+      if (copy.type === "pack") {
+        const cards = packCards(storage, copyId);
+        for (const card of storage.get("packs")?.get(id)?.toJSON() ?? []) cards.push(card as PackCard);
+      }
     }
     if (copies.length) setMyPresence({ selection: copies }, { addToHistory: true });
   }, []);
@@ -539,35 +568,47 @@ export function Canvas({ board }: { board: BoardInfo }) {
     return { cards: types.includes("image"), piles: types.includes("pile") };
   }, []);
 
-  /** How many cards are inside the selected piles, to warn before deleting them. */
-  const cardsInSelectedPiles = useMutation(
+  /** How many cards are inside the selected piles and packs, to warn before deleting them. */
+  const cardsInSelection = useMutation(
     ({ storage, self }) =>
-      self.presence.selection.reduce((n, id) => n + (storage.get("piles")?.get(id)?.length ?? 0), 0),
+      self.presence.selection.reduce(
+        (n, id) => n + (storage.get("piles")?.get(id)?.length ?? 0) + (storage.get("packs")?.get(id)?.length ?? 0),
+        0,
+      ),
     [],
   );
 
   /**
-   * Moves the selected cards into your hand or onto a pile, keeping their stacking order.
-   * Selected piles dropped onto another pile are merged into it, their cards going on top.
+   * Moves the selected cards into your hand, onto a pile or into a pack, keeping their stacking order.
+   * Selected piles dropped onto another pile or a pack go in too, their cards on top.
+   * Returns how many cards a pack already had, which it doesn't take twice.
    */
   const moveSelectionTo = useMutation(({ storage, self, setMyPresence }, target: DropTarget) => {
     const layers = storage.get("layers");
-    const dest = target.kind === "hand" ? handCards(storage, self.id) : pileCards(storage, target.id);
+    const cards: Card[] = [];
     const moved: string[] = [];
     for (const id of storage.get("layerIds").toJSON()) {
       if (!self.presence.selection.includes(id)) continue;
       const l = layers.get(id)?.toJSON();
       if (l?.type === "image") {
-        dest.push(cardFromImage(l));
-      } else if (l?.type === "pile" && target.kind === "pile" && id !== target.id) {
-        for (const card of storage.get("piles")?.get(id)?.toJSON() ?? []) dest.push(card as Card);
+        cards.push(cardFromImage(l));
+      } else if (l?.type === "pile" && target.kind !== "hand" && id !== target.id) {
+        for (const card of storage.get("piles")?.get(id)?.toJSON() ?? []) cards.push(card as Card);
       } else {
         continue;
       }
       removeLayer(storage, id);
       moved.push(id);
     }
+    let alreadyInPack = 0;
+    if (target.kind === "pack") {
+      alreadyInPack = cards.length - addToPack(storage, target.id, cards);
+    } else {
+      const dest = target.kind === "hand" ? handCards(storage, self.id) : pileCards(storage, target.id);
+      for (const card of cards) dest.push(card);
+    }
     setMyPresence({ selection: self.presence.selection.filter((id) => !moved.includes(id)) }, { addToHistory: true });
+    return alreadyInPack;
   }, []);
 
   /** Turns cards a quarter turn clockwise about their centers. */
@@ -827,6 +868,68 @@ export function Canvas({ board }: { board: BoardInfo }) {
     pileCards(storage, pileId).push(card);
   }, []);
 
+  /** Moves a card from your hand into a pack. Returns false if the pack already had it. */
+  const handToPack = useMutation(({ storage, self }, index: number, packId: string) => {
+    const hand = handCards(storage, self.id);
+    const card = hand.get(index);
+    if (!card) return true;
+    hand.delete(index);
+    return addToPack(storage, packId, [card]) === 1;
+  }, []);
+
+  // ---- Card packs -------------------------------------------------------
+
+  /** Adds cards to a pack. Returns how many were added, or null if the pack was opened or deleted meanwhile. */
+  const addCardsToPack = useMutation(({ storage }, packId: string, cards: readonly Card[]) => {
+    if (storage.get("layers").get(packId)?.get("type") !== "pack") return null;
+    return addToPack(storage, packId, cards);
+  }, []);
+
+  /**
+   * Opens a pack: the cards it gives land face down in a ring around it, and the pack is used up.
+   * Returns the pack and its cards' layer ids, or null if no card can come up.
+   */
+  const openPack = useMutation(({ storage, self, setMyPresence }, packId: string) => {
+    const pack = storage.get("layers").get(packId)?.toJSON();
+    if (pack?.type !== "pack") return null;
+    const cards = rollPack(packCards(storage, packId).toJSON(), pack.size, pack.allowDuplicates);
+    if (cards.length === 0) return null;
+    const spots = ringAround(pack, cards);
+    const cardIds = cards.map((card, i) => {
+      const id = nanoid();
+      storage.get("layers").set(id, new LiveObject<Layer>(imageFromCard(card, spots[i].x, spots[i].y, true)));
+      storage.get("layerIds").push(id);
+      return id;
+    });
+    removeLayer(storage, packId);
+    setMyPresence({ selection: self.presence.selection.filter((id) => id !== packId) }, { addToHistory: true });
+    return { pack, cardIds };
+  }, []);
+
+  /** Prints `n` more copies of a pack, with the same cards, in rows to its right. Selects the copies. */
+  const copyPack = useMutation(({ storage, setMyPresence }, packId: string, n: number) => {
+    const pack = storage.get("layers").get(packId)?.toJSON();
+    if (pack?.type !== "pack") return;
+    const cards = packCards(storage, packId).toJSON();
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const copy = {
+        ...pack,
+        x: pack.x + ((i % PACK_COPIES_PER_ROW) + 1) * (pack.width + PACK_GAP),
+        y: pack.y + Math.floor(i / PACK_COPIES_PER_ROW) * (pack.height + PACK_GAP),
+      };
+      // Copies stand on their own, outside the pack's group.
+      delete copy.groupId;
+      const id = nanoid();
+      storage.get("layers").set(id, new LiveObject<Layer>(copy));
+      storage.get("layerIds").push(id);
+      const list = packCards(storage, id);
+      for (const card of cards) list.push(card);
+      ids.push(id);
+    }
+    setMyPresence({ selection: ids }, { addToHistory: true });
+  }, []);
+
   // Boards created before hands and piles need their card storage added once.
   const storageChecked = useRef(false);
   useEffect(() => {
@@ -967,11 +1070,17 @@ export function Canvas({ board }: { board: BoardInfo }) {
     return !!r && clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
   }
 
-  /** Where cards dragged to this spot would go: your hand tray, a pile, or nowhere. */
+  /** Where cards dragged to this spot would go: your hand tray, a pile, a pack, or nowhere. */
   function dropTargetAt(clientX: number, clientY: number, p: Point, exclude: readonly string[]): DropTarget | null {
     if (isOverHand(clientX, clientY)) return { kind: "hand" };
-    const pileId = layerAt(p, ["pile"], exclude);
-    return pileId ? { kind: "pile", id: pileId } : null;
+    const id = layerAt(p, ["pile", "pack"], exclude);
+    if (!id) return null;
+    return { kind: layerTypeOf(id) === "pack" ? "pack" : "pile", id };
+  }
+
+  /** Says so when a pack already had some of the cards dropped on it. */
+  function noteAlreadyInPack(n: number) {
+    if (n > 0) setNotice(n === 1 ? "The pack already had that card." : `The pack already had ${n} of those cards.`);
   }
 
   function draw(pileId: string, n: number) {
@@ -1078,6 +1187,9 @@ export function Canvas({ board }: { board: BoardInfo }) {
       case "timer":
         toggleTimer(id);
         break;
+      case "pack":
+        openPacks([id]);
+        break;
     }
   }
 
@@ -1086,10 +1198,87 @@ export function Canvas({ board }: { board: BoardInfo }) {
     setTool("select");
   }
 
+  function addPack(center: Point) {
+    insertLayer(nanoid(), newPack(center), true);
+    setTool("select");
+    setNotice("Drag cards onto the pack to add them, then click Edit to set their chances.");
+  }
+
+  /** Opens the packs among `ids`, and plays the rip for everyone. */
+  function openPacks(ids: readonly string[]) {
+    const packIds = ids.filter((id) => layerTypeOf(id) === "pack");
+    let empty = 0;
+    for (const id of packIds) {
+      const opened = openPack(id);
+      if (!opened) {
+        empty++;
+        continue;
+      }
+      broadcast({ type: "packOpened", pack: opened.pack, cardIds: opened.cardIds });
+      showPackOpened(opened.pack, opened.cardIds);
+    }
+    if (empty === 0) return;
+    setNotice(
+      packIds.length === 1
+        ? "No card can come up from this pack yet. Drag cards onto it, or give them a weight above 0."
+        : `${empty} of the packs had no card that can come up.`,
+    );
+  }
+
+  /** Plays a pack tearing open, and its cards flying out to their spots. */
+  function showPackOpened(pack: PackLayer, cardIds: readonly string[]) {
+    const key = nanoid();
+    const from = { x: pack.x + pack.width / 2, y: pack.y + pack.height / 2 };
+    setRips((r) => [...r, { key, pack }]);
+    setPops((current) => {
+      const next = new Map(current);
+      cardIds.forEach((id, i) => next.set(id, { from, delay: POP_DELAY_MS + i * POP_STAGGER_MS }));
+      return next;
+    });
+    setTimeout(() => setRips((r) => r.filter((rip) => rip.key !== key)), RIP_MS);
+    setTimeout(
+      () =>
+        setPops((current) => {
+          const next = new Map(current);
+          for (const id of cardIds) next.delete(id);
+          return next;
+        }),
+      POP_DELAY_MS + cardIds.length * POP_STAGGER_MS + POP_MS,
+    );
+  }
+
+  function makePackCopies(packId: string) {
+    const answer = window.prompt(`How many more copies of this pack? (1–${MAX_PACK_COPIES})`, "3");
+    const n = Number(answer);
+    if (answer === null) return;
+    if (!Number.isInteger(n) || n < 1 || n > MAX_PACK_COPIES) {
+      setNotice(`Type a whole number from 1 to ${MAX_PACK_COPIES}.`);
+      return;
+    }
+    copyPack(packId, n);
+  }
+
+  /** Uploads image files from the computer and adds them to a pack as cards. */
+  async function addFilesToPack(packId: string, files: Iterable<File>) {
+    const images = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    const uploaded = await Promise.all(
+      images.map(async (file) => {
+        const [size, url] = await Promise.all([imageSize(file), uploadImage(file)]);
+        return url ? { url, ...cardSizeFor(size.width, size.height) } : null;
+      }),
+    );
+    const cards = uploaded.filter((card) => card !== null);
+    if (cards.length === 0) return;
+    const added = addCardsToPack(packId, cards);
+    if (added === null) setNotice("That pack was opened or deleted, so the images weren't added.");
+    else if (added < cards.length) noteAlreadyInPack(cards.length - added);
+    else setNotice(`Added ${added} card${added === 1 ? "" : "s"} to the pack.`);
+  }
+
   function deleteSelection() {
     if (selection.length === 0) return;
-    const cards = cardsInSelectedPiles();
-    if (cards > 0 && !window.confirm(`Delete the selected pile and the ${cards} card${cards === 1 ? "" : "s"} in it?`)) {
+    const cards = cardsInSelection();
+    if (cards > 0 && !window.confirm(`Delete the selection and the ${cards} card${cards === 1 ? "" : "s"} in its piles and packs?`)) {
       return;
     }
     deleteLayers(selection);
@@ -1387,6 +1576,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
       // Released back over the hand (or cancelled): nothing happens.
       if (!dragging || ev.type === "pointercancel" || isOverHand(ev.clientX, ev.clientY)) return;
       if (drop?.kind === "pile") handToPile(index, drop.id);
+      else if (drop?.kind === "pack") noteAlreadyInPack(handToPack(index, drop.id) ? 0 : 1);
       else playFromHand(index, toWorld(ev), ev.shiftKey || playFaceDown);
     };
     window.addEventListener("pointermove", move);
@@ -1524,7 +1714,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
         break;
       case "translating":
         if (g.drop) {
-          moveSelectionTo(g.drop);
+          noteAlreadyInPack(moveSelectionTo(g.drop));
           setDropTarget(null);
         } else if (g.deselectOnTap && lifted) {
           const { id, origin } = g.deselectOnTap;
@@ -1846,6 +2036,22 @@ export function Canvas({ board }: { board: BoardInfo }) {
       },
     );
   }
+  const packCount = selectedTypes.filter((t) => t === "pack").length;
+  if (packCount > 0) {
+    contextActions.push({
+      label: packCount > 1 ? "Open all" : "Open",
+      icon: "pack",
+      title: "Open (or double-click the pack). The cards come out face down; flip them with F.",
+      onClick: () => openPacks(selection),
+    });
+  }
+  if (selection.length === 1 && selectedTypes[0] === "pack") {
+    const packId = selection[0];
+    contextActions.push(
+      { label: "Edit", icon: "sliders", title: "Name, cover, cards per pack and each card's chance", onClick: () => setEditPackId(packId) },
+      { label: "Make copies…", icon: "duplicate", title: "Print more of this pack, with the same cards", onClick: () => makePackCopies(packId) },
+    );
+  }
   if (selectedTypes.includes("image")) {
     contextActions.push(
       { label: "Add to hand", icon: "to_hand", onClick: () => moveSelectionTo({ kind: "hand" }) },
@@ -1876,6 +2082,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
       onSheetUploadClick={() => sheetInputRef.current?.click()}
       onLoadClick={() => loadInputRef.current?.click()}
       onNewPileClick={() => createPile(viewportCenter())}
+      onNewPackClick={() => addPack(viewportCenter())}
       onNewCounterClick={() => addCounter(viewportCenter())}
       onAddPiece={addPiece}
       canUndo={canUndo}
@@ -1925,11 +2132,23 @@ export function Canvas({ board }: { board: BoardInfo }) {
         onPointerCancel={onPointerUp}
         onPointerLeave={() => updateMyPresence({ cursor: null })}
         onDragOver={(e) => {
-          if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          // Image files dropped on a pack become its cards.
+          const packId = layerAt(toWorld(e), ["pack"], []);
+          const next: DropTarget | null = packId ? { kind: "pack", id: packId } : null;
+          setDropTarget((current) => (sameDrop(current, next) ? current : next));
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(null);
         }}
         onDrop={(e) => {
           e.preventDefault();
-          addImages(e.dataTransfer.files, toWorld(e));
+          setDropTarget(null);
+          const p = toWorld(e);
+          const packId = layerAt(p, ["pack"], []);
+          if (packId) addFilesToPack(packId, e.dataTransfer.files);
+          else addImages(e.dataTransfer.files, p);
         }}
       >
         <CardBackDefs />
@@ -1941,10 +2160,21 @@ export function Canvas({ board }: { board: BoardInfo }) {
               zoom={camera.zoom}
               flipped={camera.flipped}
               isEditing={editingId === id}
-              isDropTarget={dropTarget?.kind === "pile" && dropTarget.id === id}
+              isDropTarget={dropTarget !== null && dropTarget.kind !== "hand" && dropTarget.id === id}
+              pop={pops.get(id)}
               {...stableHandlers}
             />
           ))}
+          {rips.map(({ key, pack }) =>
+            // Upright for Player 2, like the pack was.
+            camera.flipped ? (
+              <g key={key} transform={`rotate(180 ${pack.x + pack.width / 2} ${pack.y + pack.height / 2})`}>
+                <PackRip pack={pack} />
+              </g>
+            ) : (
+              <PackRip key={key} pack={pack} />
+            ),
+          )}
           <OthersSelections zoom={camera.zoom} />
           {selectionBounds && !editingId && (
             <SelectionBox
@@ -2109,6 +2339,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
           onTake={(index, to) => takeFromPile(browsePileId, index, to)}
         />
       )}
+
+      {editPackId && <PackEditor packId={editPackId} onClose={() => setEditPackId(null)} uploadImage={uploadImage} />}
 
       {loadFiles && (
         <LoadDialog

@@ -55,10 +55,11 @@ export function besidePile(storage: Root, pileId: string, card: CardLike) {
   return { x: pile.x + pile.width + 24 + card.width / 2, y: pile.y + pile.height / 2 };
 }
 
-/** Removes a layer from the board, along with a pile's cards. */
+/** Removes a layer from the board, along with a pile's or pack's cards. */
 export function removeLayer(storage: Root, id: string) {
   storage.get("layers").delete(id);
   storage.get("piles")?.delete(id);
+  storage.get("packs")?.delete(id);
   const order = storage.get("layerIds");
   const index = order.indexOf(id);
   if (index !== -1) order.delete(index);
