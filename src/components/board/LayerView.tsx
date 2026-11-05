@@ -2,7 +2,7 @@
 
 import { useStorage } from "@liveblocks/react/suspense";
 import { memo, useEffect, useRef } from "react";
-import { CardBack, CroppedImage, PileView } from "./CardArt";
+import { CardBack, CardFaceImage, PileView } from "./CardArt";
 import { isSideways } from "./cards";
 import { CounterView } from "./CounterView";
 import { ChipView, CoinView, DieView, PawnView, TimerView } from "./GamePieces";
@@ -193,7 +193,7 @@ function LayerContent({
           {layer.faceDown ? (
             <CardBack {...common} {...box} />
           ) : (
-            <CroppedImage {...common} url={layer.url} crop={layer.crop} {...box} />
+            <CardFaceImage {...common} card={layer} {...box} />
           )}
         </g>
       );

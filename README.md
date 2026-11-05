@@ -28,10 +28,18 @@ Collaborative whiteboards. Sign up with a username and password, create boards, 
     - **Adding cards:** drop cards onto the pack from the board, your hand or a pile (a whole pile adds all its cards), or drop image files from your computer onto it. Each card starts with weight 1, and a pack takes each card only once.
     - **Edit** (select the pack): name, cover, cards per pack (1 to 20), whether the same card can come up twice in one pack, and each card's **weight**. Bigger weights come up more often; 0 means never. The dialog shows each card's chance per pick, and everyone on the board can see it.
     - **Guarantee:** tag cards as Guarantee in **Edit**, and every pack holds at least one of them.
+    - **Finish:** give rare cards a **Foil** or **Holo** finish in **Edit**. They come out of the pack shiny.
     - **Cover:** upload your own, or keep the default foil wrapper, which shows the pack's name and recolors with the color swatches.
     - **Open** (or double-click): the pack tears open for everyone and its cards pop out face down in a ring around it. Flip them one by one with **F**. The pack is used up; **Undo** puts it back.
     - **Make copies…** prints more of a pack with the same cards, in rows beside it. **Duplicate** (Ctrl+D) copies a pack's cards too.
   - **Flipping:** press **F** while hovering a card or pile. All face-down cards share one card-back pattern.
+  - **Foil and holo cards:** select cards and click the **Plain / Foil / Holo** button to switch their finish. Foil cards get a metallic sheen that sweeps across them; holo cards also get drifting rainbow colors and twinkling sparkles. In your hand and the pile browser, the shine follows your mouse. A card keeps its finish in piles, hands and packs, and face down it looks like any other card. With reduced motion turned on in your system settings, the shine stays still.
+- **Backpack:** your own storage for anything you want to bring to other boards, tied to your account. Open it with the **Backpack** button in the toolbar.
+  - **Saving:** select anything on the board (cards, piles, packs, dice, counters, drawings, or a mix) and click **Save to backpack**, or drag it onto the open backpack. Drag cards from your hand onto it too. Saving makes a copy: what's on the board stays where it was. Piles keep their cards, face up or down, and packs keep their settings, cards, weights, guarantees and finishes.
+  - **Kinds:** a lone pile is saved as a **Deck**, a lone pack as a **Pack**, and everything else as an **Asset**. Filter by kind at the top of the backpack.
+  - **Placing:** click **Place**, or drag an item from the backpack onto the board. Each time places a new copy, and changing or deleting the item later never changes copies already on boards.
+  - **Managing:** rename or delete items, or **Replace with selection** to swap what's inside an item for what's selected. The **Backpack** section of the dashboard does the same, and lets you upload images straight into it, as separate cards (**Upload cards**) or as one deck (**Upload a deck**).
+  - **Limits:** 200 items, and each item up to 500 pieces and 1,000 cards per deck or pack.
   - **Board game kit** (the die button under **Cards**): pieces that everyone sees and that recolor with the color swatches.
     - **Die:** double-click or click **Roll** to roll it; every player sees the same result and a tumble. The **d6** action switches between d4, d6, d8, d10, d12 and d20. Select several dice and click **Roll all** to see the total.
     - **Coin:** double-click, click **Toss** or press **F** to toss it for heads or tails.
@@ -115,20 +123,20 @@ Open http://localhost:3000.
 ## Project layout
 
 ```
-prisma/schema.prisma          User, Board, BoardMember tables
+prisma/schema.prisma          User, Board, BoardMember, BackpackItem tables
 src/proxy.ts                  Redirects signed-out users away from protected pages
 src/liveblocks.config.ts      Types for Liveblocks presence and storage
-src/lib/                      Database client, sessions, board access checks
-src/app/actions/              Server actions (auth, boards, sharing)
+src/lib/                      Database client, sessions, board access checks, backpack reads
+src/app/actions/              Server actions (auth, boards, sharing, backpack)
 src/app/api/liveblocks-auth/  Lets a user into a board's Liveblocks room only if they have access
-src/app/api/upload/           Issues Vercel Blob upload tokens for board members
-src/app/dashboard/            Board list
+src/app/api/upload/           Issues Vercel Blob upload tokens for board members and backpack uploads
+src/app/dashboard/            Board list and backpack
 src/app/board/[id]/           Board page
 src/components/board/         Canvas, layers, toolbar, share dialog
 ```
 
 ### How board data is stored
 
-- **Postgres** stores users, boards and who has access.
+- **Postgres** stores users, boards, who has access, and each user's backpack (`BackpackItem`: the saved layers with their cards, in the format described in `src/components/board/backpack.ts`).
 - **Liveblocks** stores each board's contents in a room called `board:<id>`. `layers` maps layer ids to shapes, and `layerIds` holds the paint order. `piles`, `hands` and `packs` hold the cards in each pile, hand and pack. Opening a pack also sends a `packOpened` room event, so everyone sees the rip.
 - **Vercel Blob** stores uploaded images. Layers keep only the image URL.

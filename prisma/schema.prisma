@@ -12,8 +12,9 @@ model User {
   username     String        @unique
   passwordHash String
   createdAt    DateTime      @default(now())
-  boards       Board[]
-  memberships  BoardMember[]
+  boards        Board[]
+  memberships   BoardMember[]
+  backpackItems BackpackItem[]
 }
 
 model Board {
@@ -38,4 +39,22 @@ model BoardMember {
 
   @@id([boardId, userId])
   @@index([userId])
+}
+
+// Something a user saved to their backpack to bring to any board: cards and other pieces, a deck
+// (a pile and its cards) or a card pack. `data` holds the layers and their cards (see
+// src/components/board/backpack.ts); `preview` is the little that the backpack list shows.
+model BackpackItem {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  // "asset", "deck" or "pack".
+  kind      String
+  data      Json
+  preview   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId, updatedAt])
 }

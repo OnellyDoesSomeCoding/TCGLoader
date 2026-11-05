@@ -4,10 +4,11 @@ import type { LiveObject } from "@liveblocks/client";
 import { useMutation, useStorage } from "@liveblocks/react/suspense";
 import { useEffect, useRef, useState } from "react";
 import { CardImage } from "./CardArt";
+import { FINISH_NAMES } from "./cards";
 import { Icon } from "./Icon";
 import { PackImage } from "./PackArt";
 import { MAX_PACK_CARDS, MAX_WEIGHT, MIN_PACK_CARDS, packCards } from "./packs";
-import type { PackCard, PackLayer } from "./types";
+import type { Finish, PackCard, PackLayer } from "./types";
 
 const ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
 const THUMB_HEIGHT = 56;
@@ -118,6 +119,7 @@ export function PackEditor({
       if (!card) return;
       const next: PackCard = { ...card, ...patch };
       if (!next.guaranteed) delete next.guaranteed;
+      if (!next.finish) delete next.finish;
       list.set(index, next);
     },
     [packId],
@@ -238,7 +240,8 @@ export function PackEditor({
           <p className="mt-1 text-xs text-zinc-500">
             {guarantees > 0
               ? `Every pack has at least one of the ${guarantees} Guarantee card${guarantees === 1 ? "" : "s"}.`
-              : "Tag cards as Guarantee to make sure every pack has at least one of them."}
+              : "Tag cards as Guarantee to make sure every pack has at least one of them."}{" "}
+            Give rare cards a Foil or Holo finish to make them shine.
           </p>
         </div>
 
@@ -272,6 +275,22 @@ export function PackEditor({
                     className="size-4 accent-brand"
                   />
                   Guarantee
+                </label>
+                <label className="flex items-center gap-2 text-xs font-medium text-zinc-600">
+                  Finish
+                  <select
+                    value={card.finish ?? ""}
+                    onChange={(e) => updateCard(i, { finish: (e.target.value || undefined) as Finish | undefined })}
+                    aria-label={`Finish of card ${i + 1}`}
+                    className={`${fieldClass} py-1.5`}
+                  >
+                    <option value="">Plain</option>
+                    {(Object.keys(FINISH_NAMES) as Finish[]).map((f) => (
+                      <option key={f} value={f}>
+                        {FINISH_NAMES[f]}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <span
                   className="ml-auto text-sm font-medium tabular-nums text-zinc-700"

@@ -1,8 +1,8 @@
 import { LiveList, LiveMap, type LiveObject } from "@liveblocks/client";
-import type { Card, Crop, ImageLayer } from "./types";
+import type { Card, Crop, Finish, ImageLayer } from "./types";
 
 type Root = LiveObject<Liveblocks["Storage"]>;
-type CardLike = { url: string; width: number; height: number; crop?: Readonly<Crop>; rotation?: number };
+type CardLike = { url: string; width: number; height: number; crop?: Readonly<Crop>; finish?: Finish; rotation?: number };
 
 export const DEFAULT_PILE_SIZE = { width: 160, height: 224 };
 
@@ -86,6 +86,7 @@ export function cardFromImage(layer: CardLike): Card {
     width: sideways ? layer.height : layer.width,
     height: sideways ? layer.width : layer.height,
     ...(layer.crop ? { crop: { ...layer.crop } } : {}),
+    ...(layer.finish ? { finish: layer.finish } : {}),
   };
 }
 
@@ -99,6 +100,7 @@ export function imageFromCard(card: CardLike, cx: number, cy: number, faceDown: 
     width: card.width,
     height: card.height,
     ...(card.crop ? { crop: { ...card.crop } } : {}),
+    ...(card.finish ? { finish: card.finish } : {}),
     ...(faceDown ? { faceDown: true } : {}),
   };
 }
@@ -110,4 +112,12 @@ export function shuffled<T>(items: readonly T[]): T[] {
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
+}
+
+export const FINISH_NAMES: Record<Finish, string> = { foil: "Foil", holo: "Holo" };
+
+/** The finish after `finish` in the order plain → foil → holo → plain. Missing means plain. */
+export function nextFinish(finish: Finish | undefined): Finish | undefined {
+  if (!finish) return "foil";
+  return finish === "foil" ? "holo" : undefined;
 }

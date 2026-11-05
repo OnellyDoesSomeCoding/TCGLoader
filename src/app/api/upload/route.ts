@@ -1,9 +1,11 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
+import { BACKPACK_UPLOAD } from "@/components/board/backpack";
 import { canAccessBoard } from "@/lib/boards";
 import { getSession } from "@/lib/session";
 
 // Issues short-lived tokens so the browser can upload images straight to Vercel Blob.
+// `clientPayload` is the board the image is for, or BACKPACK_UPLOAD.
 export async function POST(request: Request) {
   const body = (await request.json()) as HandleUploadBody;
 
@@ -14,7 +16,8 @@ export async function POST(request: Request) {
       onBeforeGenerateToken: async (_pathname, clientPayload) => {
         const user = await getSession();
         if (!user) throw new Error("Not signed in");
-        if (!clientPayload || !(await canAccessBoard(clientPayload, user.userId))) {
+        const forBackpack = clientPayload === BACKPACK_UPLOAD;
+        if (!forBackpack && (!clientPayload || !(await canAccessBoard(clientPayload, user.userId)))) {
           throw new Error("You don't have access to this board");
         }
         return {

@@ -47,9 +47,12 @@ export function packCards(storage: Root, packId: string) {
   return list;
 }
 
-/** True when two cards show the same picture: the same image and the same part of it. */
+/**
+ * True when two cards are the same: the same image, the same part of it and the same finish. A foil
+ * copy of a plain card is a card of its own, with its own weight.
+ */
 function sameCard(a: Readonly<Card>, b: Readonly<Card>) {
-  if (a.url !== b.url) return false;
+  if (a.url !== b.url || a.finish !== b.finish) return false;
   if (!a.crop || !b.crop) return !a.crop && !b.crop;
   return a.crop.x === b.crop.x && a.crop.y === b.crop.y && a.crop.width === b.crop.width && a.crop.height === b.crop.height;
 }
@@ -66,6 +69,7 @@ export function addToPack(storage: Root, packId: string, cards: readonly Card[])
       width: card.width,
       height: card.height,
       ...(card.crop ? { crop: { ...card.crop } } : {}),
+      ...(card.finish ? { finish: card.finish } : {}),
       weight: 1,
     };
     list.push(entry);

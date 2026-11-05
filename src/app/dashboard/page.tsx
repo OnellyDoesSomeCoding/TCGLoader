@@ -1,8 +1,10 @@
 import { Suspense } from "react";
 import { logout } from "@/app/actions/auth";
 import { Logo } from "@/components/Logo";
+import { listBackpackItems } from "@/lib/backpack";
 import { listBoardsForUser, type BoardSummary } from "@/lib/boards";
 import { requireUser } from "@/lib/session";
+import { BackpackManager } from "./BackpackManager";
 import { BoardCard } from "./BoardCard";
 import { CreateBoardForm } from "./CreateBoardForm";
 
@@ -28,6 +30,16 @@ export default function DashboardPage() {
         <Suspense fallback={<BoardsSkeleton />}>
           <BoardLists />
         </Suspense>
+
+        <section className="mt-14">
+          <h2 className="text-2xl font-semibold tracking-tight">Backpack</h2>
+          <p className="mb-4 mt-1 text-sm text-zinc-500">
+            Cards, decks, packs and anything else you saved, ready to bring to any board.
+          </p>
+          <Suspense fallback={<BoardsSkeleton />}>
+            <Backpack />
+          </Suspense>
+        </section>
       </main>
     </div>
   );
@@ -66,6 +78,11 @@ async function BoardLists() {
       />
     </>
   );
+}
+
+async function Backpack() {
+  const user = await requireUser();
+  return <BackpackManager initialItems={await listBackpackItems(user.userId)} />;
 }
 
 function BoardSection({ title, boards, empty }: { title: string; boards: BoardSummary[]; empty: string }) {

@@ -42,6 +42,9 @@ export type Crop = { x: number; y: number; width: number; height: number };
 
 export const FULL_CROP: Crop = { x: 0, y: 0, width: 1, height: 1 };
 
+/** A shiny face for rare cards: a sweeping sheen (foil), or rainbow colors and sparkles too (holo). */
+export type Finish = "foil" | "holo";
+
 export type ImageLayer = {
   type: "image";
   x: number;
@@ -51,6 +54,8 @@ export type ImageLayer = {
   url: string;
   // Set on cards cut from a sheet; missing means the whole image.
   crop?: Crop;
+  // Missing means a plain card.
+  finish?: Finish;
   // Face-down cards show the shared card back to everyone.
   faceDown?: boolean;
   // Clockwise turn in degrees: 0, 90, 180 or 270. Missing means 0. x/y/width/height
@@ -166,6 +171,7 @@ export type Card = {
   width: number;
   height: number;
   crop?: Crop;
+  finish?: Finish;
 };
 
 /**
@@ -194,8 +200,8 @@ export type Layer = (
   Grouping;
 export type LayerType = Layer["type"];
 
-/** Where dragged cards will land when released. */
-export type DropTarget = { kind: "hand" } | { kind: "pile" | "pack"; id: string };
+/** Where dragged cards will land when released. Things dropped on your backpack are saved to it. */
+export type DropTarget = { kind: "hand" } | { kind: "backpack" } | { kind: "pile" | "pack"; id: string };
 
 /** Read-only point list, as returned by Liveblocks' immutable storage snapshots. */
 export type Points = ReadonlyArray<ReadonlyArray<number>>;

@@ -14,19 +14,32 @@ import {
   useStorage,
   useUpdateMyPresence,
 } from "@liveblocks/react/suspense";
-import { upload } from "@vercel/blob/client";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  MAX_ITEM_CHARS,
+  MAX_ITEM_NAME,
+  dataFromCard,
+  defaultItemName,
+  itemSize,
+  relativeEntries,
+  type BackpackData,
+  type BackpackEntry,
+  type BackpackSummary,
+} from "./backpack";
+import { BACKPACK_MIME, BackpackPanel, useBackpack } from "./BackpackPanel";
 import { BoardHeader } from "./BoardHeader";
 import { CardBackDefs, CardImage } from "./CardArt";
 import {
   DEFAULT_PILE_SIZE,
+  FINISH_NAMES,
   besidePile,
   cardFromImage,
   cardSizeFor,
   ensureCardStorage,
   handCards,
   imageFromCard,
+  nextFinish,
   pileCards,
   popTop,
   removeLayer,
@@ -54,6 +67,7 @@ import { PackRip } from "./PackArt";
 import { PackEditor } from "./PackEditor";
 import { MAX_PACK_COPIES, addToPack, newPack, packCards, ringAround, rollPack } from "./packs";
 import { PileBrowser } from "./PileBrowser";
+import { MAX_IMAGE_BYTES, imageSize, uploadImageFile } from "./upload";
 import { ShareDialog, type BoardInfo } from "./ShareDialog";
 import { StyleBar, Toolbar, type ContextAction, type StyleControls } from "./Toolbar";
 import {
@@ -71,6 +85,7 @@ import type {
   Card,
   DropTarget,
   Handle,
+  ImageLayer,
   InsertTool,
   Layer,
   LayerType,
@@ -85,7 +100,6 @@ import type {
 const DEFAULT_STYLE: Style = { color: "#1e1e1e", fill: "transparent", strokeWidth: 4, fontSize: 24 };
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGE_SIDE = 480;
 const MAX_SHEET_SIDE = 1200;
 const CARD_SPACING = 16;
@@ -128,9 +142,13 @@ type Gesture =
   | { mode: "marquee"; origin: Point; additive: readonly string[] }
   // `drops`: what the selection can be dropped onto; see selectionDrops.
   // `deselectOnTap`: with "Select more" on, a tap on a selected layer deselects it, a drag moves the selection.
+  // `start`: where the drag began, so a selection dropped on the backpack can go back where it was.
+  // `backpack`: whether dropping on the backpack saves the selection (not for a card just pulled off a pile).
   | {
       mode: "translating";
+      start: Point;
       last: Point;
+      backpack: boolean;
       drops: { cards: boolean; piles: boolean };
       drop: DropTarget | null;
       deselectOnTap?: { id: string; origin: Point };
@@ -169,8 +187,13 @@ function withGroups(layers: Liveblocks["Storage"]["layers"], order: readonly str
 
 function sameDrop(a: DropTarget | null, b: DropTarget | null) {
   if (a === null || b === null) return a === b;
-  if (a.kind === "hand" || b.kind === "hand") return a.kind === b.kind;
-  return a.kind === b.kind && a.id === b.id;
+  if (a.kind !== b.kind) return false;
+  return !("id" in a) || ("id" in b && a.id === b.id);
+}
+
+/** The pile or pack a drop target is, if it's one. */
+function dropLayerId(target: DropTarget | null) {
+  return target && "id" in target ? target.id : null;
 }
 
 /** True when canvas shortcuts should stay out of the way: typing, or a dialog is open. */
@@ -235,20 +258,6 @@ function insertGeometry(tool: InsertTool, origin: Point, p: Point, constrain: bo
   return rectFromPoints(origin, { x: origin.x + w, y: origin.y + h });
 }
 
-async function imageSize(file: File) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    return { width: img.naturalWidth || 400, height: img.naturalHeight || 300 };
-  } catch {
-    return { width: 400, height: 300 };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
 export function Canvas({ board }: { board: BoardInfo }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -256,6 +265,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
   const sheetInputRef = useRef<HTMLInputElement>(null);
   const loadInputRef = useRef<HTMLInputElement>(null);
   const handTrayRef = useRef<HTMLDivElement>(null);
+  const backpackRef = useRef<HTMLElement>(null);
   const gesture = useRef<Gesture>({ mode: "idle" });
   // Latest pointer position on the board, for "F flips the card under the cursor".
   const cursorRef = useRef<Point | null>(null);
@@ -292,6 +302,10 @@ export function Canvas({ board }: { board: BoardInfo }) {
   // Touch stand-ins for Shift: add to the selection, and play cards from your hand or piles face down.
   const [multiSelect, setMultiSelect] = useState(false);
   const [playFaceDown, setPlayFaceDown] = useState(false);
+  const [backpackOpen, setBackpackOpen] = useState(false);
+  // The backpack item being fetched to place on the board.
+  const [placingId, setPlacingId] = useState<string | null>(null);
+  const backpack = useBackpack();
 
   const compact = useMediaQuery(COMPACT_QUERY);
   const narrow = useMediaQuery(NARROW_QUERY);
@@ -364,6 +378,20 @@ export function Canvas({ board }: { board: BoardInfo }) {
       [selection],
     ),
     shallow,
+  );
+
+  // The first selected card's finish, shown on its Finish button. Null when no card is selected.
+  const selectedFinish = useStorage(
+    useCallback(
+      (root) => {
+        for (const id of selection) {
+          const l = root.layers[id];
+          if (l?.type === "image") return l.finish ?? "plain";
+        }
+        return null;
+      },
+      [selection],
+    ),
   );
 
   // The first selected layer's style, so the style bar reflects what is selected.
@@ -583,7 +611,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
    * Selected piles dropped onto another pile or a pack go in too, their cards on top.
    * Returns how many cards a pack already had, which it doesn't take twice.
    */
-  const moveSelectionTo = useMutation(({ storage, self, setMyPresence }, target: DropTarget) => {
+  const moveSelectionTo = useMutation(({ storage, self, setMyPresence }, target: Exclude<DropTarget, { kind: "backpack" }>) => {
     const layers = storage.get("layers");
     const cards: Card[] = [];
     const moved: string[] = [];
@@ -634,6 +662,72 @@ export function Canvas({ board }: { board: BoardInfo }) {
       const layer = l?.toJSON();
       if (layer?.type === "image" || layer?.type === "pile") l!.update({ faceDown: !layer.faceDown });
     }
+  }, []);
+
+  /**
+   * Gives the selected cards the finish after the first one's (plain → foil → holo → plain), so they
+   * all end up the same.
+   */
+  const cycleFinish = useMutation(({ storage }, ids: readonly string[]) => {
+    const cards = ids
+      .map((id) => storage.get("layers").get(id))
+      .filter((l) => l?.get("type") === "image") as unknown as LiveObject<ImageLayer>[];
+    if (cards.length === 0) return;
+    const finish = nextFinish(cards[0].get("finish"));
+    for (const l of cards) {
+      if (finish) l.update({ finish });
+      else l.delete("finish");
+    }
+  }, []);
+
+  /** The selection as a backpack item, with the piles' and packs' cards, or null if nothing is selected. */
+  const selectionForBackpack = useMutation(({ storage, self }): BackpackData | null => {
+    const layers = storage.get("layers");
+    const entries: BackpackEntry[] = [];
+    for (const id of storage.get("layerIds").toJSON()) {
+      if (!self.presence.selection.includes(id)) continue;
+      const layer = layers.get(id)?.toJSON() as Layer | undefined;
+      if (!layer) continue;
+      const cards =
+        layer.type === "pile"
+          ? storage.get("piles")?.get(id)?.toJSON()
+          : layer.type === "pack"
+            ? storage.get("packs")?.get(id)?.toJSON()
+            : undefined;
+      entries.push({ layer, ...(cards ? { cards: cards as Card[] | PackCard[] } : {}) });
+    }
+    return entries.length > 0 ? { entries: relativeEntries(entries) } : null;
+  }, []);
+
+  /** Puts a copy of a backpack item on the board, centered on `center`, and selects it. */
+  const placeFromBackpack = useMutation(({ storage, setMyPresence }, data: BackpackData, center: Point) => {
+    const layers = storage.get("layers");
+    const order = storage.get("layerIds");
+    const size = itemSize(data);
+    const dx = center.x - size.width / 2;
+    const dy = center.y - size.height / 2;
+    // Each placed copy of a group is a new group of its own.
+    const newGroupIds = new Map<string, string>();
+    const ids: string[] = [];
+    for (const { layer, cards } of data.entries) {
+      const copy: Layer = { ...layer, x: layer.x + dx, y: layer.y + dy };
+      if (copy.groupId) {
+        if (!newGroupIds.has(copy.groupId)) newGroupIds.set(copy.groupId, nanoid());
+        copy.groupId = newGroupIds.get(copy.groupId);
+      }
+      const id = nanoid();
+      layers.set(id, new LiveObject<Layer>(copy));
+      order.push(id);
+      ids.push(id);
+      if (copy.type === "pile") {
+        const pile = pileCards(storage, id);
+        for (const card of cards ?? []) pile.push(card);
+      } else if (copy.type === "pack") {
+        const pack = packCards(storage, id);
+        for (const card of (cards ?? []) as PackCard[]) pack.push(card);
+      }
+    }
+    setMyPresence({ selection: ids }, { addToHistory: true });
   }, []);
 
   const createPile = useMutation(({ storage, setMyPresence }, center: Point) => {
@@ -1070,8 +1164,14 @@ export function Canvas({ board }: { board: BoardInfo }) {
     return !!r && clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
   }
 
-  /** Where cards dragged to this spot would go: your hand tray, a pile, a pack, or nowhere. */
+  function isOverBackpack(clientX: number, clientY: number) {
+    const r = backpackRef.current?.getBoundingClientRect();
+    return !!r && clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+  }
+
+  /** Where cards dragged to this spot would go: your backpack, your hand tray, a pile, a pack, or nowhere. */
   function dropTargetAt(clientX: number, clientY: number, p: Point, exclude: readonly string[]): DropTarget | null {
+    if (isOverBackpack(clientX, clientY)) return { kind: "backpack" };
     if (isOverHand(clientX, clientY)) return { kind: "hand" };
     const id = layerAt(p, ["pile", "pack"], exclude);
     if (!id) return null;
@@ -1275,6 +1375,61 @@ export function Canvas({ board }: { board: BoardInfo }) {
     else setNotice(`Added ${added} card${added === 1 ? "" : "s"} to the pack.`);
   }
 
+  // ---- Backpack ----------------------------------------------------------
+
+  function toggleBackpack() {
+    if (!backpackOpen && backpack.items === null) backpack.load();
+    setBackpackOpen((open) => !open);
+  }
+
+  /** Saves an item to your backpack and says how it went. With `ask`, asks for its name first. */
+  async function saveToBackpack(data: BackpackData, ask: boolean) {
+    let name = defaultItemName(data);
+    if (ask) {
+      const answer = window.prompt("Name it for your backpack", name);
+      if (answer === null) return;
+      name = answer.trim() || name;
+    }
+    name = name.slice(0, MAX_ITEM_NAME);
+    if (JSON.stringify(data).length > MAX_ITEM_CHARS) {
+      setNotice("That's too big to fit in your backpack. Try saving fewer things at once.");
+      return;
+    }
+    const error = await backpack.save(name, data);
+    setNotice(error ?? `Saved “${name}” to your backpack.`);
+  }
+
+  function saveSelectionToBackpack(ask: boolean) {
+    const data = selectionForBackpack();
+    if (data) saveToBackpack(data, ask);
+  }
+
+  async function replaceBackpackItem(item: BackpackSummary) {
+    const data = selectionForBackpack();
+    if (!data) return;
+    if (!window.confirm(`Replace what's in “${item.name}” with the selection? Copies already on boards stay as they are.`)) return;
+    const error = await backpack.replace(item.id, data);
+    setNotice(error ?? `Replaced what's in “${item.name}”.`);
+  }
+
+  /** Fetches an item and places a copy centered on `at`, or in the middle of the screen. */
+  async function placeBackpackItem(id: string, at?: Point) {
+    if (placingId) return;
+    setPlacingId(id);
+    try {
+      const item = await backpack.fetch(id);
+      if (!item) {
+        setNotice("Couldn't get that item. It may have been deleted.");
+        backpack.load();
+        return;
+      }
+      placeFromBackpack(item.data, at ?? viewportCenter());
+      setTool("select");
+    } finally {
+      setPlacingId(null);
+    }
+  }
+
   function deleteSelection() {
     if (selection.length === 0) return;
     const cards = cardsInSelection();
@@ -1323,12 +1478,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
     }
     setUploads((n) => n + 1);
     try {
-      const blob = await upload(`boards/${board.id}/${file.name.replace(/[^\w.-]+/g, "_")}`, file, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-        clientPayload: board.id,
-      });
-      return blob.url;
+      return await uploadImageFile(file, `boards/${board.id}`, board.id);
     } catch (error) {
       setNotice(`Couldn't upload ${file.name}: ${(error as Error).message}`);
       return null;
@@ -1523,7 +1673,9 @@ export function Canvas({ board }: { board: BoardInfo }) {
     const p = toWorld(e);
     gesture.current = {
       mode: "translating",
+      start: p,
       last: p,
+      backpack: true,
       drops: selectionDrops(),
       drop: null,
       deselectOnTap: deselectOnTap ? { id, origin: p } : undefined,
@@ -1575,7 +1727,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
       setDropTarget(null);
       // Released back over the hand (or cancelled): nothing happens.
       if (!dragging || ev.type === "pointercancel" || isOverHand(ev.clientX, ev.clientY)) return;
-      if (drop?.kind === "pile") handToPile(index, drop.id);
+      if (drop?.kind === "backpack") saveToBackpack(dataFromCard(card), false);
+      else if (drop?.kind === "pile") handToPile(index, drop.id);
       else if (drop?.kind === "pack") noteAlreadyInPack(handToPack(index, drop.id) ? 0 : 1);
       else playFromHand(index, toWorld(ev), ev.shiftKey || playFaceDown);
     };
@@ -1640,10 +1793,12 @@ export function Canvas({ board }: { board: BoardInfo }) {
       case "translating":
         translateSelection(p.x - g.last.x, p.y - g.last.y);
         g.last = p;
-        if (g.drops.cards || g.drops.piles) {
+        if (g.backpack || g.drops.cards || g.drops.piles) {
           let drop = dropTargetAt(e.clientX, e.clientY, p, currentSelection());
-          // Only loose cards go into a hand; piles only merge into piles.
-          if (drop?.kind === "hand" && !g.drops.cards) drop = null;
+          // Only loose cards go into a hand; piles only merge into piles. Anything can go in the backpack.
+          if (drop?.kind === "backpack" && !g.backpack) drop = null;
+          else if (drop?.kind === "hand" && !g.drops.cards) drop = null;
+          else if (dropLayerId(drop) && !g.drops.cards && !g.drops.piles) drop = null;
           if (!sameDrop(drop, g.drop)) {
             g.drop = drop;
             setDropTarget(drop);
@@ -1653,12 +1808,26 @@ export function Canvas({ board }: { board: BoardInfo }) {
       case "pilePress":
         if (Math.hypot(p.x - g.origin.x, p.y - g.origin.y) * camera.zoom > 4) {
           if (takeTopToBoard(g.pileId, p, g.shift || playFaceDown)) {
-            gesture.current = { mode: "translating", last: p, drops: { cards: true, piles: false }, drop: null };
+            gesture.current = {
+              mode: "translating",
+              start: p,
+              last: p,
+              backpack: false,
+              drops: { cards: true, piles: false },
+              drop: null,
+            };
           } else {
             // Empty pile: drag the pile itself.
             updateMyPresence({ selection: [g.pileId] }, { addToHistory: true });
             translateSelection(p.x - g.origin.x, p.y - g.origin.y);
-            gesture.current = { mode: "translating", last: p, drops: { cards: false, piles: true }, drop: null };
+            gesture.current = {
+              mode: "translating",
+              start: g.origin,
+              last: p,
+              backpack: true,
+              drops: { cards: false, piles: true },
+              drop: null,
+            };
           }
         }
         break;
@@ -1713,7 +1882,12 @@ export function Canvas({ board }: { board: BoardInfo }) {
         setMarquee(null);
         break;
       case "translating":
-        if (g.drop) {
+        if (g.drop?.kind === "backpack") {
+          // Saving keeps the originals on the board, back where they were.
+          translateSelection(g.start.x - g.last.x, g.start.y - g.last.y);
+          saveSelectionToBackpack(false);
+          setDropTarget(null);
+        } else if (g.drop) {
           noteAlreadyInPack(moveSelectionTo(g.drop));
           setDropTarget(null);
         } else if (g.deselectOnTap && lifted) {
@@ -2060,6 +2234,22 @@ export function Canvas({ board }: { board: BoardInfo }) {
       { label: "Rotate", icon: "rotate", title: "Turn 90° right (double-click a card)", onClick: () => rotateCards(selection) },
     );
   }
+  if (selectedFinish) {
+    contextActions.push({
+      label: selectedFinish === "plain" ? "Plain" : FINISH_NAMES[selectedFinish],
+      icon: "sparkle",
+      title: "Change the finish: plain, foil or holo. Foil and holo cards shine.",
+      onClick: () => cycleFinish(selection),
+    });
+  }
+  if (selection.length > 0) {
+    contextActions.push({
+      label: "Save to backpack",
+      icon: "backpack",
+      title: "Save a copy to your backpack, to bring to any board (or drag it onto the open backpack)",
+      onClick: () => saveSelectionToBackpack(true),
+    });
+  }
   if (selection.length === 1 && selectedTypes[0] === "image") {
     contextActions.push({ label: "Cut into cards", icon: "scissors", onClick: () => setCutTargetId(selection[0]) });
   }
@@ -2085,6 +2275,8 @@ export function Canvas({ board }: { board: BoardInfo }) {
       onNewPackClick={() => addPack(viewportCenter())}
       onNewCounterClick={() => addCounter(viewportCenter())}
       onAddPiece={addPiece}
+      backpackOpen={backpackOpen}
+      onBackpackClick={toggleBackpack}
       canUndo={canUndo}
       canRedo={canRedo}
       onUndo={history.undo}
@@ -2132,6 +2324,12 @@ export function Canvas({ board }: { board: BoardInfo }) {
         onPointerCancel={onPointerUp}
         onPointerLeave={() => updateMyPresence({ cursor: null })}
         onDragOver={(e) => {
+          // A backpack item dragged from the panel is placed where it's dropped.
+          if (e.dataTransfer.types.includes(BACKPACK_MIME)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            return;
+          }
           if (!e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
           // Image files dropped on a pack become its cards.
@@ -2146,6 +2344,11 @@ export function Canvas({ board }: { board: BoardInfo }) {
           e.preventDefault();
           setDropTarget(null);
           const p = toWorld(e);
+          const itemId = e.dataTransfer.getData(BACKPACK_MIME);
+          if (itemId) {
+            placeBackpackItem(itemId, p);
+            return;
+          }
           const packId = layerAt(p, ["pack"], []);
           if (packId) addFilesToPack(packId, e.dataTransfer.files);
           else addImages(e.dataTransfer.files, p);
@@ -2160,7 +2363,7 @@ export function Canvas({ board }: { board: BoardInfo }) {
               zoom={camera.zoom}
               flipped={camera.flipped}
               isEditing={editingId === id}
-              isDropTarget={dropTarget !== null && dropTarget.kind !== "hand" && dropTarget.id === id}
+              isDropTarget={dropLayerId(dropTarget) === id}
               pop={pops.get(id)}
               {...stableHandlers}
             />
@@ -2265,6 +2468,22 @@ export function Canvas({ board }: { board: BoardInfo }) {
         </div>
       ) : (
         handTray
+      )}
+
+      {backpackOpen && (
+        <BackpackPanel
+          panelRef={backpackRef}
+          backpack={backpack}
+          narrow={narrow}
+          highlighted={dropTarget?.kind === "backpack"}
+          hasSelection={selection.length > 0}
+          placingId={placingId}
+          onPlace={(id) => placeBackpackItem(id)}
+          onSaveSelection={() => saveSelectionToBackpack(true)}
+          onReplace={replaceBackpackItem}
+          onNotice={setNotice}
+          onClose={() => setBackpackOpen(false)}
+        />
       )}
 
       {handDrag && (

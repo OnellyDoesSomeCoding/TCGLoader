@@ -101,3 +101,109 @@ body {
 @utility card-back-stripes {
   background: repeating-linear-gradient(45deg, #3730a3 0 5px, #4338ca 5px 10px);
 }
+
+/*
+ * The shine on foil and holo cards shown in HTML (hand, pile browser, pack editor), matching the
+ * board's SVG gradients in CardArt.tsx. ::before holds the layers blended into the art, ::after the
+ * sheen (and the holo sparkles) drawn on top. --mx and --my are where the sheen sits, as fractions of
+ * the card's size. CardImage sets them and `data-follow` while the mouse is over the card; otherwise
+ * the shine drifts on its own, or rests at the default spot when the viewer asks for less motion.
+ */
+.card-finish {
+  --mx: 0.3;
+  --my: 0.3;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.card-finish::before,
+.card-finish::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+}
+
+.card-finish::before {
+  /* Light and dark bands that give the art a metallic look. */
+  background-image: linear-gradient(
+    135deg,
+    rgb(255 255 255 / 0.45),
+    rgb(0 0 0 / 0.18) 30%,
+    rgb(255 255 255 / 0.4) 55%,
+    rgb(0 0 0 / 0.18) 80%,
+    rgb(255 255 255 / 0.45)
+  );
+  mix-blend-mode: overlay;
+}
+
+/* The sheen is drawn 3× the card's size, so 100% puts it off the top left and 0% off the bottom right. */
+.card-finish::after {
+  background-image: linear-gradient(135deg, transparent 38%, rgb(255 255 255 / 0.6) 50%, transparent 62%);
+  background-size: 300% 300%;
+  background-position: calc((1.5 - var(--mx)) * 50%) calc((1.5 - var(--my)) * 50%);
+  animation: card-sheen 5s ease-in-out infinite;
+}
+
+/* Holo's rainbow, between ::before and ::after. CardImage masks it with the diamond lattice. */
+.card-finish-rainbow {
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    120deg,
+    rgb(255 60 142 / 0.5),
+    rgb(255 204 51 / 0.5) 8%,
+    rgb(61 255 160 / 0.5) 16%,
+    rgb(51 200 255 / 0.5) 24%,
+    rgb(180 92 255 / 0.5) 32%,
+    rgb(255 60 142 / 0.5) 40%
+  );
+  background-size: 200% 200%;
+  background-position: calc(var(--mx) * 100%) calc(var(--my) * 100%);
+  mix-blend-mode: overlay;
+  animation: card-holo-drift 9s linear infinite alternate;
+}
+
+.card-finish-holo::after {
+  background-image:
+    linear-gradient(135deg, transparent 38%, rgb(255 255 255 / 0.6) 50%, transparent 62%),
+    radial-gradient(circle, rgb(255 255 255 / 0.75) 0 1px, transparent 1.8px),
+    radial-gradient(circle, rgb(255 255 255 / 0.55) 0 0.8px, transparent 1.5px);
+  background-size: 300% 300%, 31px 37px, 47px 43px;
+  background-repeat: no-repeat, repeat, repeat;
+  background-position:
+    calc((1.5 - var(--mx)) * 50%) calc((1.5 - var(--my)) * 50%),
+    calc(var(--mx) * -8px) calc(var(--my) * -8px),
+    calc(11px + var(--mx) * 6px) calc(7px + var(--my) * 6px);
+  animation: card-holo-sheen 5s ease-in-out infinite;
+}
+
+.card-finish[data-follow]::before,
+.card-finish[data-follow]::after,
+.card-finish[data-follow] .card-finish-rainbow {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-finish::before,
+  .card-finish::after,
+  .card-finish-rainbow {
+    animation: none !important;
+  }
+}
+
+@keyframes card-sheen {
+  0% { background-position: 100% 100%; }
+  45%, 100% { background-position: 0% 0%; }
+}
+
+@keyframes card-holo-sheen {
+  0% { background-position: 100% 100%, 0 0, 11px 7px; }
+  45%, 100% { background-position: 0% 0%, 0 0, 11px 7px; }
+}
+
+@keyframes card-holo-drift {
+  from { background-position: 0% 0%; }
+  to { background-position: 100% 100%; }
+}

@@ -66,6 +66,8 @@ export function Toolbar({
   onNewPackClick,
   onNewCounterClick,
   onAddPiece,
+  backpackOpen,
+  onBackpackClick,
   canUndo,
   canRedo,
   onUndo,
@@ -82,6 +84,8 @@ export function Toolbar({
   onNewPackClick: () => void;
   onNewCounterClick: () => void;
   onAddPiece: (kind: PieceKind) => void;
+  backpackOpen: boolean;
+  onBackpackClick: () => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -151,6 +155,13 @@ export function Toolbar({
           { icon: "chip", label: "Marker chip", onClick: () => onAddPiece("chip") },
           { icon: "timer", label: "Sand timer", onClick: () => onAddPiece("timer") },
         ]}
+      />
+      <ToolButton
+        icon="backpack"
+        label="Backpack: your saved cards, decks and packs"
+        active={backpackOpen}
+        compact={compact}
+        onClick={onBackpackClick}
       />
     </>
   );
